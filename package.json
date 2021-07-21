@@ -7,7 +7,6 @@
   "bin": "./index.js",
   "type": "module",
   "dependencies": {
-    "dotenv": "^10.0.0",
     "minimist": "^1.2.5",
     "postgres": "^1.0.2"
   },

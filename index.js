@@ -1,14 +1,10 @@
-/* globals process, global, sql, console */
+/* globals process, console */
 import minimist from 'minimist'
 import postgres from 'postgres'
 import * as M from 'module'
 
 // expose argv like zx
-global.argv = minimist(process.argv.slice(2)) 
-
-// export postgres like pgzx
-global.postgres = postgres
-global.pg = postgres
+const argv = minimist(process.argv.slice(2)) 
 
 const pkg = M.createRequire(import.meta.url) ('./package.json')
 
@@ -42,14 +38,19 @@ The only way to specify a connection is via a pg connection URL.
 `
 
 
-function parseOptions(args){
-    
-    let [connectionString] = args._
+
+async function main(){
+    if( process.argv.length == 2 ){
+        console.log(help)
+        process.exit(1)
+    }
+
+    let [connectionString] = argv._
 
     let { 
         ssl:theirSSL
         , ...rest
-    } = args
+    } = argv
     
 
     if ( theirSSL == 'heroku' ) {
@@ -88,29 +89,11 @@ function parseOptions(args){
         connectionString, { ssl, onnotice, max: 1 }
     ]
 
-    return {
-        pg, connectionString, ...args, ...rest
-    }
-}
-
-
-async function main(){
-    if( process.argv.length == 2 ){
-        console.log(help)
-        process.exit(1)
-    }
-
-    let options = parseOptions(global.argv)
-
     const sql =
         postgres(...options.pg)
 
-    global.sql = sql
-
     {
-        let sql = global.sql.unsafe;
-
-        await sql`
+        await sql.unsafe`
             create extension if not exists pgcrypto;
             create schema if not exists pgmg;
             create table if not exists pgmg.migration (
@@ -123,7 +106,7 @@ async function main(){
     }
 
     const migrations = 
-        global.argv._.filter( x => x.endsWith('.js') || x.endsWith('.mjs') )
+        argv._.filter( x => x.endsWith('.js') || x.endsWith('.mjs') )
 
     {
         for ( let migration of migrations ) {
