@@ -96,11 +96,13 @@ async function main(){
             create extension if not exists pgcrypto;
             create schema if not exists pgmg;
             create table if not exists pgmg.migration (
-                migration_id uuid primary key default public.gen_random_uuid(),
-                name text not null,
-                filename text not null,
-                description text
-            );
+                migration_id uuid primary key default public.gen_random_uuid()
+                , name text not null
+                , filename text not null
+                , description text null
+                , created_at timestamptz not null default now()
+            )
+            ;
         `
     }
 
