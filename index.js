@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 /* globals process, console */
 import minimist from 'minimist'
 import postgres from 'postgres'
