@@ -13,8 +13,14 @@ const pkg = M.createRequire(import.meta.url) ('./package.json')
 
 const help = 
 `
-Usage: pgmg [CONNECTION] [OPTIONS] [FILES]
+Usage: pgmg [PGMG OPTIONS] [CONNECTION] [OPTIONS] [FILES]
 Version: ${pkg.version}
+
+[PGMG OPTiONS]
+
+--help      Logs this help message
+        
+--version   Logs the current pgmg version
 
 [CONNECTION]
 - Pass a postgres connection string (just like psql)
@@ -43,9 +49,14 @@ The only way to specify a connection is via a pg connection URL.
 
 
 async function main(){
-    if( process.argv.length == 2 ){
+    if( process.argv.length == 2 || argv.help ){
         console.log(help)
-        process.exit(1)
+        process.exit(argv.help ? 0 : 1)
+    }
+
+    if( argv.version ) {
+        console.log(pkg.version)
+        process.exit(0)
     }
 
     let [connectionString] = argv._
