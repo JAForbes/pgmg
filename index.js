@@ -49,7 +49,6 @@ async function main(){
 
     let { 
         ssl:theirSSL
-        , ...rest
     } = argv
     
 
@@ -90,7 +89,7 @@ async function main(){
     ]
 
     const sql =
-        postgres(...options.pg)
+        postgres(...pg)
 
     {
         await sql.unsafe`
