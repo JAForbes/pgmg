@@ -4,6 +4,7 @@
 import minimist from 'minimist'
 import postgres from 'postgres'
 import * as M from 'module'
+import * as P from 'path'
 
 // expose argv like zx
 const argv = minimist(process.argv.slice(2)) 
@@ -113,7 +114,8 @@ async function main(){
 
     {
         for ( let migration of migrations ) {
-            let module = await import(migration)
+            
+            let module = await import(P.resolve(process.cwd(), migration))
             if ( !module.name ) {
                 console.error('Migration', migration, 'did not export a name.')
                 process.exit(1)
