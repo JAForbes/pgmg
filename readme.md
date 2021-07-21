@@ -121,7 +121,7 @@ pgmg will apply migrations in the order you pass them to pgmg as arguments.
 So if you choose to number your migrations, a simple glob will order them.
 
 
-```
+```bash
 # Alphabetical ordered files
 $ ls -l migrations
 01-user-permissions.js
@@ -144,7 +144,9 @@ magic-link.js
 
 We can expand that file as arguments like so:
 
-`pgmg $DATABASE_URL $(cat migrations.txt)`
+```bash
+pgmg $DATABASE_URL $(cat migrations.txt)
+```
 
 If you wanted, your manifest could be json, or yaml, or whatever you want, as long as you can extract the filenames and pass them as arguments.
 
