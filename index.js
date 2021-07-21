@@ -152,5 +152,6 @@ main()
 .catch( 
     e => {
         console.log('error', e)
+        process.exit(1)
     }
 )
