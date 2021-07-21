@@ -32,7 +32,7 @@ export async function transaction(sql){
 ```bash
 # We don't rely on alphabetical order, you just pass in the files
 # you want to migrate.
-pgmg "$DATABASE_URL" "migrations/first-migrations.mjs"
+npx pgmg "$DATABASE_URL" "migrations/first-migrations.mjs"
 ```
 
 ## What
@@ -129,7 +129,7 @@ $ ls -l migrations
 03-magic-link.js
 
 # globbing will natively order alphabetically by default
-$ pgmg $DATABASE_URL migrations/*.js
+$ npx pgmg $DATABASE_URL migrations/*.js
 ```
 
 You could also have a simple text file that acts a manifest and expand the file as arguments like so:
@@ -145,7 +145,7 @@ magic-link.js
 We can expand that file as arguments like so:
 
 ```bash
-pgmg $DATABASE_URL $(cat migrations.txt)
+npx pgmg $DATABASE_URL $(cat migrations.txt)
 ```
 
 If you wanted, your manifest could be json, or yaml, or whatever you want, as long as you can extract the filenames and pass them as arguments.
