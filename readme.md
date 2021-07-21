@@ -32,7 +32,6 @@ export async function transaction(sql){
 ```bash
 # We don't rely on alphabetical order, you just pass in the files
 # you want to migrate.
-# 
 pgmg "$DATABASE_URL" "migrations/first-migrations.mjs"
 ```
 
@@ -41,7 +40,7 @@ pgmg "$DATABASE_URL" "migrations/first-migrations.mjs"
 - A forward only, idempotent, postgres migration tool, with minimal noise but also minimal magic
 - OOTB support for postgres.js, we pass in a preconfigured postgres.js instance just point us at migration files
 - A simple migration file format, just export a transaction function a name and a description
-- All metadata stored in 1 simple table in the same database that you are migrating, makes it easy to get fine grained control
+- All metadata stored in 1 simple table in the same database that you are migrating, makes it easy to get fine-grained control
 
 ## How
 
@@ -60,6 +59,7 @@ It also makes testing / local development super logical.  When you wipe the DB, 
 
 ### CLI
 
+```
 Usage: pgmg [CONNECTION] [OPTIONS] [FILES]
 
 [CONNECTION]
@@ -81,6 +81,8 @@ The only way to specify a connection is via a pg connection URL.
     | --ssl=reject          Reject unauthorized connections
     | --ssl=no-reject       Do not reject unauthorized connections
     | --ssl=heroku          --no-ssl-reject if the host ends with a .com
+
+```
 
 ### Migration File
 
@@ -118,7 +120,21 @@ pgmg will apply migrations in the order you pass them to pgmg as arguments.
 
 So if you choose to number your migrations, a simple glob will order them.
 
+
+```
+# Alphabetical ordered files
+$ ls -l migrations
+01-user-permissions.js
+02-full-text-search.js
+03-magic-link.js
+
+# globbing will natively order alphabetically by default
+$ pgmg $DATABASE_URL migrations/*.js
+```
+
 You could also have a simple text file that acts a manifest and expand the file as arguments like so:
+
+Imagine we have a `migrations.txt` file:
 
 ```txt
 user-permissions.js
@@ -126,7 +142,9 @@ full-text-search.js
 magic-link.js
 ```
 
-And then `pgmg $DATABASE_URL $(cat migrations.txt)`
+We can expand that file as arguments like so:
+
+`pgmg $DATABASE_URL $(cat migrations.txt)`
 
 If you wanted, your manifest could be json, or yaml, or whatever you want, as long as you can extract the filenames and pass them as arguments.
 
