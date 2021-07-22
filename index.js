@@ -6,6 +6,9 @@ import postgres from 'postgres'
 import * as M from 'module'
 import * as P from 'path'
 
+import * as u from './utils.js'
+import dryPostgres from './dryPostgres.js'
+
 // expose argv like zx
 const argv = minimist(process.argv.slice(2)) 
 
@@ -62,7 +65,8 @@ async function main(){
     let [connectionString] = argv._
 
     let { 
-        ssl:theirSSL
+        ssl:theirSSL,
+        dry=false
     } = argv
     
 
@@ -90,8 +94,8 @@ async function main(){
         : theirSSL !== 'disabled' && theirSSL !== false && theirSSL
 
     function onnotice(...args){
-        if( sql.onnotice ) {
-            sql.onnotice(...args)
+        if( realSQL.onnotice ) {
+            realSQL.onnotice(...args)
         } else {
             if(args[0].severity == 'NOTICE') return;
             console.log(...args)
@@ -102,11 +106,24 @@ async function main(){
         connectionString, { ssl, onnotice, max: 1 }
     ]
 
-    const sql =
+    const realSQL =
         postgres(...pg)
 
+    const drySQL =
+        dryPostgres(realSQL)
+
+    const sql = dry ? drySQL : realSQL
+
+    console.log(u)
+    sql.pgmg = u
+    console.log(sql.pgmg)
+
+    sql.raw = function raw(strings, ...values){
+        return sql.unsafe(strings.map( (x,i) => x + ( i in values ? values[i] : '') ).join(''))
+    }
+
     {
-        await sql.unsafe`
+        await realSQL.unsafe`
             create extension if not exists pgcrypto;
             create schema if not exists pgmg;
             create table if not exists pgmg.migration (
@@ -134,9 +151,14 @@ async function main(){
                 console.error('Migration', migration, 'did not export a transaction or action function.')
                 process.exit(1)
             }
-            let action = module.action || (sql => sql.begin(module.transaction))
+            let action = module.action || (SQL => SQL.begin( sql => {
+                sql.raw = SQL.raw
+                sql.pgmg = u
+                sql.raw.pgmg = u
+                module.transaction(sql)
+            }))
 
-            const [found] = await sql`
+            const [found] = await realSQL`
                 select * from pgmg.migration where name = ${module.name}
             `
             let description = module.description.split('\n').map( x => x.trim() ).filter(Boolean).join('\n')
@@ -155,7 +177,7 @@ async function main(){
         }
     }
 
-    await sql.end()
+    await realSQL.end()
 }
 
 
