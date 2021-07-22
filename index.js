@@ -114,9 +114,7 @@ async function main(){
 
     const sql = dry ? drySQL : realSQL
 
-    console.log(u)
     sql.pgmg = u
-    console.log(sql.pgmg)
 
     sql.raw = function raw(strings, ...values){
         return sql.unsafe(strings.map( (x,i) => x + ( i in values ? values[i] : '') ).join(''))
