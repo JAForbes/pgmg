@@ -116,9 +116,10 @@ async function main(){
 
     sql.pgmg = u
 
-    sql.raw = function raw(strings, ...values){
-        return sql.unsafe(strings.map( (x,i) => x + ( i in values ? values[i] : '') ).join(''))
+    function raw(strings, ...values){ 
+        return sql.unsafe([String.raw(strings, ...values)], [])
     }
+    sql.raw = raw
 
     {
         await realSQL.unsafe`
@@ -135,43 +136,76 @@ async function main(){
         `
     }
 
+    const always = []
+
     const migrations = 
         argv._.filter( x => x.endsWith('.js') || x.endsWith('.mjs') )
 
-    {
-        for ( let migration of migrations ) {
-            
-            let module = await import(P.resolve(process.cwd(), migration))
-            if ( !module.name ) {
-                console.error('Migration', migration, 'did not export a name.')
-                process.exit(1)
-            } else if (!(module.transaction || module.action)) {
-                console.error('Migration', migration, 'did not export a transaction or action function.')
-                process.exit(1)
-            }
-            let action = module.action || (SQL => SQL.begin( sql => {
-                sql.raw = SQL.raw
+    for ( let migration of migrations ) {
+        
+        let module = await import(P.resolve(process.cwd(), migration))
+        if ( !module.name ) {
+            console.error('Migration', migration, 'did not export a name.')
+            process.exit(1)
+        } else if (!(
+            module.transaction 
+            || module.action 
+            || module.always 
+        )) {
+            console.error('Migration', migration, 'did not export a transaction or action function.')
+            process.exit(1)
+        }
+        let action = 
+            module.action 
+            || module.transaction && (SQL => SQL.begin( sql => {
                 sql.pgmg = u
                 sql.raw.pgmg = u
                 module.transaction(sql)
             }))
 
-            const [found] = await realSQL`
-                select * from pgmg.migration where name = ${module.name}
-            `
-            let description = module.description.split('\n').map( x => x.trim() ).filter(Boolean).join('\n')
-            if (!found){
-                try {
-                    await action(sql)
-                    await sql`
-                        insert into pgmg.migration(name, filename, description) 
-                        values (${module.name}, ${migration}, ${description})
-                    `
-                } catch (e) {
-                    console.error(e)
-                    process.exit(1)
-                }
+        if( module.always ) {
+            always.push(module.always)
+        }
+
+        const [found] = await realSQL`
+            select * from pgmg.migration where name = ${module.name}
+        `
+        let description = module.description.split('\n').map( x => x.trim() ).filter(Boolean).join('\n')
+        if (!found && action){
+            try {
+                await action(sql)
+                await sql`
+                    insert into pgmg.migration(name, filename, description) 
+                    values (${module.name}, ${migration}, ${description})
+                `
+            } catch (e) {
+                console.error(e)
+                process.exit(1)
             }
+        }
+    }
+
+    // always are migration hooks that always run
+    // they run after the other migrations to guarantee
+    // any checks you perform in always are against the changes made in the prior transactions
+    // all always checks run within the same transaction
+    let SQL = sql
+    if ( always.length ) {
+
+        try {
+            await sql.begin( async sql => {
+                sql.pgmg = u
+                sql.raw = raw
+                sql.raw.pgmg = u
+                console.log('starting loop')
+                for( let f of always ) {
+                    console.log(f)
+                    await f(sql)
+                }
+            })
+        } catch (e) {
+            console.error(e)
+            throw e
         }
     }
 
