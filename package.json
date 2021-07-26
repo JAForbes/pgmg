@@ -1,6 +1,6 @@
 {
   "name": "pgmg",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "pgmg = postgres + migrations",
   "main": "index.js",
   "module": "index.js",
