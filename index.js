@@ -116,10 +116,13 @@ async function main(){
 
     sql.pgmg = u
 
-    function raw(strings, ...values){ 
-        return sql.unsafe([String.raw(strings, ...values)], [])
+    function Raw(sql){
+
+        return function raw(strings, ...values){ 
+            return sql.unsafe(String.raw(strings, ...values))
+        }
     }
-    sql.raw = raw
+    sql.raw = Raw(sql)
 
     {
         await realSQL.unsafe`
@@ -159,6 +162,7 @@ async function main(){
             module.action 
             || module.transaction && (SQL => SQL.begin( sql => {
                 sql.pgmg = u
+                sql.raw = Raw(sql)
                 sql.raw.pgmg = u
                 module.transaction(sql)
             }))
@@ -189,17 +193,15 @@ async function main(){
     // they run after the other migrations to guarantee
     // any checks you perform in always are against the changes made in the prior transactions
     // all always checks run within the same transaction
-    let SQL = sql
+    
     if ( always.length ) {
 
         try {
             await sql.begin( async sql => {
                 sql.pgmg = u
-                sql.raw = raw
+                sql.raw = Raw(sql)
                 sql.raw.pgmg = u
-                console.log('starting loop')
                 for( let f of always ) {
-                    console.log(f)
                     await f(sql)
                 }
             })
