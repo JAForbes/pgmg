@@ -27,6 +27,7 @@ export default function dryPostgres(realSQL){
 
     sql.begin = begin
     sql.unsafe = unsafe
+    sql.savepoint = begin
     sql.end = end
 
     return sql

@@ -93,9 +93,28 @@ async function main(){
         // inspired by: https://github.com/porsager/postgres/blob/master/lib/index.js#L577
         : theirSSL !== 'disabled' && theirSSL !== false && theirSSL
 
+        
+    let app = {
+
+        async resetConnection(){
+            if( app.sql ) {
+                await app.sql.end()
+            }
+
+            app.realSQL = RealSQL()
+
+            app.drySQL =
+                dryPostgres(app.realSQL)
+        
+            app.sql = dry ? app.drySQL : app.realSQL
+            app.sql.pgmg = u
+            app.sql.raw = Raw(app.sql)
+        }
+    }
+
     function onnotice(...args){
-        if( realSQL.onnotice ) {
-            realSQL.onnotice(...args)
+        if( app.realSQL.onnotice ) {
+            app.realSQL.onnotice(...args)
         } else {
             if(args[0].severity == 'NOTICE') return;
             console.log(...args)
@@ -103,18 +122,12 @@ async function main(){
     }
 
     const pg = [
-        connectionString, { ssl, onnotice, max: 1 }
+        connectionString
+        , { ssl, onnotice, max: 1, prepare: false }
     ]
 
-    const realSQL =
+    const RealSQL = () =>
         postgres(...pg)
-
-    const drySQL =
-        dryPostgres(realSQL)
-
-    const sql = dry ? drySQL : realSQL
-
-    sql.pgmg = u
 
     function Raw(sql){
 
@@ -122,10 +135,11 @@ async function main(){
             return sql.unsafe(String.raw(strings, ...values))
         }
     }
-    sql.raw = Raw(sql)
+    
 
     {
-        await realSQL.unsafe`
+        await app.resetConnection()
+        await app.realSQL.unsafe`
             create extension if not exists pgcrypto;
             create schema if not exists pgmg;
             create table if not exists pgmg.migration (
@@ -145,7 +159,9 @@ async function main(){
         argv._.filter( x => x.endsWith('.js') || x.endsWith('.mjs') )
 
     for ( let migration of migrations ) {
-        
+        // so SET EXAMPLE=on is reset per migration
+        await app.resetConnection()
+
         let module = await import(P.resolve(process.cwd(), migration))
         if ( !module.name ) {
             console.error('Migration', migration, 'did not export a name.')
@@ -164,25 +180,29 @@ async function main(){
                 sql.pgmg = u
                 sql.raw = Raw(sql)
                 sql.raw.pgmg = u
-                module.transaction(sql)
+                return module.transaction(sql)
             }))
 
         if( module.always ) {
             always.push(module.always)
         }
 
-        const [found] = await realSQL`
+        const [found] = await app.realSQL`
             select * from pgmg.migration where name = ${module.name}
         `
-        let description = module.description.split('\n').map( x => x.trim() ).filter(Boolean).join('\n')
+        
+        let description = module.description ? module.description.split('\n').map( x => x.trim() ).filter(Boolean).join('\n') : null
         if (!found && action){
             try {
-                await action(sql)
-                await sql`
+                console.log('Running migration', migration)
+                await action(app.sql)
+                console.log('Migration complete')
+                await app.sql`
                     insert into pgmg.migration(name, filename, description) 
                     values (${module.name}, ${migration}, ${description})
                 `
             } catch (e) {
+                console.error('Migration failed')
                 console.error(e)
                 process.exit(1)
             }
@@ -197,7 +217,7 @@ async function main(){
     if ( always.length ) {
 
         try {
-            await sql.begin( async sql => {
+            await app.sql.begin( async sql => {
                 sql.pgmg = u
                 sql.raw = Raw(sql)
                 sql.raw.pgmg = u
@@ -206,12 +226,12 @@ async function main(){
                 }
             })
         } catch (e) {
-            console.error(e)
+            console.error(e.line)
             throw e
         }
     }
 
-    await realSQL.end()
+    await app.realSQL.end()
 }
 
 
