@@ -109,6 +109,7 @@ async function main(){
             app.sql = dry ? app.drySQL : app.realSQL
             app.sql.pgmg = u
             app.sql.raw = Raw(app.sql)
+            app.sql.Raw = Raw
         }
     }
 
