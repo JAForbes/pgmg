@@ -48,7 +48,7 @@ A very simple script, we simply inject a schema (`pgmg`) and table (`migration`)
 
 If the migration file runs without error, we insert a migration row based on the exported properties (name, description).  If it fails, we don't.
 
-pgmg has no opinion on migration order, but most of the time, there is only new files that aren't recorded, and in that case they can be run in any order.  So you can just pass `migrations/*` to pgmg and it will ignore migrations it has een before, and run new ones in sequence in glob order.
+pgmg has no opinion on migration order, but most of the time, there is only new files that aren't recorded, and in that case they can be run in any order.  So you can just pass `migrations/*` to pgmg and it will ignore migrations it hasn't seen before, and run new ones in sequence in glob order.
 
 `pgmg` stores its metadata in the target database (instead of in a different config file or something).  It does this because it makes it easy to escape out of the migration system when you know what you are doing.  E.g. when you want to run all migrations from scratch in development (`delete from pgmg.migration`) or even (`drop schema pgmg`).
 
