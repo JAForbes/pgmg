@@ -183,6 +183,14 @@ async function main(){
                 , created_at timestamptz not null default now()
             )
             ;
+
+            create table if not exists pgmg.migration_hook (
+                hook text not null
+                , migration_id uuid not null references pgmg.migration(migration_id)
+                , created_at timestamptz not null default now()
+                
+                , primary key (migration_id, hook)
+            );
         `
     }
 
@@ -217,7 +225,6 @@ async function main(){
                     name:hook
                     , transaction
                     , dev
-                    , record
                     , dataOnly
                     , schemaOnly 
                     , always
@@ -251,7 +258,10 @@ async function main(){
                 const [found] = always
                     ? [true] 
                     : await app.realSQL`
-                        select * from pgmg.migration where name = ${module.name}
+                        select * 
+                        from pgmg.migration M
+                        inner join pgmg.migration_hook H using(migration_id)
+                        where (name, hook) = (${module.name}, ${hook})
                     `
 
                 let description = module.description 
@@ -262,14 +272,17 @@ async function main(){
                     try {
                         console.log('Running migration', migration)
                         await action(app.sql)
-                        if( record ) {
-                            recorded.push( async () => {
-                                await app.sql`
-                                    insert into pgmg.migration(name, filename, description) 
-                                    values (${module.name}, ${migration}, ${description})
-                                `
-                            })
-                        }
+                        await app.sql`
+                            insert into pgmg.migration(name, filename, description) 
+                            values (${module.name}, ${migration}, ${description})
+                            on conflict (migration_id) do nothing;
+                        `
+                        await app.sql`
+                            insert into pgmg.migration_hook(hook, migration_id)
+                            select migration_id, ${hook} from pgmg.migration
+                            where (name, filename, description) = (${module.name}, ${migration}, ${description})
+                            on conflict (migration_id) do nothing;
+                        `
                         console.log('Migration complete')
                         
                     } catch (e) {
