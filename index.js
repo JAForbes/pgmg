@@ -36,7 +36,11 @@ Any files passed as arguments after the connection string will be imported as JS
 The only way to specify a connection is via a pg connection URL.
 
 --dev                       Runs any teardown hooks before running the 
-                            forward migration.
+                            forward migration.  Annotates the migration
+                            record as \`dev\` so it will be re-run next time
+                            as long as --dev is passed.
+
+                            Only runs teardown hooks after 1 successful migration.
 
 --data-only                 Only runs the \`data\` hook.
                             Does not update the \`pgmg.migration\` table.
@@ -67,7 +71,7 @@ const order = [
     ,{ name: 'clusterMigrate'
     , hooks: [
         [
-            { name: 'teardown', schemaOnly: true, skip: !argv.dev }             
+            { name: 'teardown', schemaOnly: true, skip: !argv.dev, ifExists: true }
             ,{ name: 'cluster', skip: argv.dataOnly, recordChange: true }
         ]
     ] 
@@ -192,7 +196,7 @@ async function main(){
                 hook text not null
                 , migration_id uuid not null references pgmg.migration(migration_id)
                 , created_at timestamptz not null default now()
-                
+                , dev boolean not null default false
                 , primary key (migration_id, hook)
             );
         `
@@ -230,6 +234,7 @@ async function main(){
                     , always
                     , skip
                     , recordChange
+                    , ifExists
                 } of hookPhase
             ) {
                 if(skip) {
@@ -248,26 +253,49 @@ async function main(){
                     action = migration[hook]
                 }
 
+                const [anyMigrationFound] =
+                    await app.realSQL`
+                        select migration_id
+                        from pgmg.migration 
+                        where name = ${module.name}'
+                    `
+
                 const [found] = always
-                    ? [true] 
+                    ? [{}] 
                     // either match on hook for new migrations
                     // or for old migrations just match on name
                     : await app.realSQL`
-                        select migration_id
+                        select M.migration_id, H.dev
                         from pgmg.migration M
                         inner join pgmg.migration_hook H using(migration_id)
                         where (name, hook) = (${module.name}, ${hook})
-                        union all 
-                        select migration_id 
-                        from pgmg.migration M 
-                        where name = ${module.name} and created_at < '2022-08-11';
+                        union all
+                        select migration_id, false as dev
+                        from pgmg.migration 
+                        where name = ${module.name}
+                        and created_at < '2022-08-11
+                        ;
                     `
 
                 let description = module.description 
                     ? module.description.split('\n').map( x => x.trim() ).filter(Boolean).join('\n') 
                     : null
 
-                if (!found && action){
+                const shouldContinue =
+                    action
+                    && (
+                        
+                        // never ran before
+                        !found 
+                        
+                        // ran before in dev mode and we are in dev mode again
+                        || found.dev && argv.dev
+
+                        // run if any migration exists, for teardown
+                        || ifExists && anyMigrationFound
+                    )
+
+                if (shouldContinue){
                     try {
                         console.log('Running migration', migration)
                         await action(app.sql)
@@ -281,7 +309,7 @@ async function main(){
                             await app.sql`
                                 insert into pgmg.migration_hook(hook, migration_id)
                                 select migration_id, ${hook} from pgmg.migration
-                                where (name, filename, description) = (${module.name}, ${migration}, ${description})
+                                where (name, filename, description, dev) = (${module.name}, ${migration}, ${description}, ${!!argv.dev})
                                 on conflict (migration_id) do nothing;
                             `
                         }

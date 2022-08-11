@@ -81,9 +81,11 @@ The only way to specify a connection is via a pg connection URL.
                             modify data in other hooks, they will still run.
 
 --dev                       Runs any teardown hooks before running the 
-                            forward migration.  Does not record new changes
-                            in the pgmg.migration tables so you can re-run
-                            new migrations multiple times.
+                            forward migration.  Annotates the migration
+                            record as `dev` so it will be re-run next time
+                            as long as --dev is passed.
+
+                            Only runs teardown hooks after 1 successful migration.
 
 --ssl 
     | --ssl                 Enables ssl
@@ -93,6 +95,10 @@ The only way to specify a connection is via a pg connection URL.
     | --ssl=no-reject       Do not reject unauthorized connections
     | --ssl=heroku          --no-ssl-reject if the host ends with a .com
 
+--restore <file>            Restores a database backup.  Does the following:
+                            Drops the original db, creates a new db, runs
+                            cluster level migrations, restores the backup into
+                            the new database, then runs the remaining migrations.
 ```
 
 ### Migration File
