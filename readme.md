@@ -74,6 +74,15 @@ Any files passed as arguments after the connection string will be imported as JS
 
 The only way to specify a connection is via a pg connection URL.
 
+--data-only                 Only runs the `data` hook.
+                            Does not update the `pgmg.migration` table.
+
+--schema-only               Skips the `data` hook.  But if you insert or
+                            modify data in other hooks, they will still run.
+
+--dev                       Runs any teardown hooks before running the 
+                            forward migration.
+
 --ssl 
     | --ssl                 Enables ssl
     | --ssl=prefer          Prefers ssl
@@ -86,31 +95,51 @@ The only way to specify a connection is via a pg connection URL.
 
 ### Migration File
 
-A migration file can have either an `action` export or a `transaction` export.  An `action` export gets a raw sql instance.  And performs no rollbacks if there is a failure.  That means you need to manually handle your own error and rollback cases.
+A migration file export various lifecycle functions that are run depending on context and other metadata exports.
 
-The recommended approach is to use `transaction` instead wherever possible which automatically wraps your migration in [`sql.begin`](https://github.com/porsager/postgres#transactions).  This will work great for most migrations, sometimes though you cannot run your migration in a migration and then you'll need to use `action`.
+#### export name (required)
 
-Beyond that, you _must_ export a unique name property, this name is used by pgmg to determine whether or not this migration has run before.  But, it is also good for reference later to see what migrations have run on this db in the past.  Especially when creating curated or conditional migrations.
+The name of the migration.  You _must_ export a unique name property, this name is used by pgmg to determine whether or not this migration has run before.  But, it is also good for reference later to see what migrations have run on this db in the past.  Especially when creating curated or conditional migrations.
 
-`description` is an optional export, but a recommended export.  It is rare you need to change the database schema and there isn't some helpful reason you can provide for the change.  A migration is effectively an admission that our first idea of a model was incorrect or incomplete, that is always worthwhile to document.
+#### export description (recommended)
+
+A description of why this migration needs to occur.  `description` is an optional export, but a recommended export.  It is rare you need to change the database schema and there isn't some helpful reason you can provide for the change.  A migration is effectively an admission that our first idea of a model was incorrect or incomplete, that is always worthwhile to document.
 
 #### export transaction
 
-Perform your migration within a transaction.
+Perform your migration within a transaction.  If it is ever possible to use `transaction` instead of `action` it is recommended as a failed migration will not leave your database in a partially altered state.  This will work great for most migrations, sometimes though you cannot run your migration in a migration and then you'll need to use `action`.
 
 #### export action
 
 Perform your migration with a raw sql instance, no transaction.
 
-This is necessary for some schema changes, e.g. role changes, or any usage of `concurrently`.
+This is necessary for some schema changes, e.g. role changes, or any usage of [`concurrently`](https://www.postgresql.org/docs/current/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY).
 
-#### export name (required)
+An `action` export gets a raw sql instance.  And performs no rollbacks if there is a failure.  That means you need to manually handle your own error and rollback cases.
 
-The name of the migration.
+#### export cluster
 
-#### export description (recommended)
+The `cluster` hook is designed for cluster level migrations, like defining users/roles and server settings.  It runs before the `action` / `transaction` / `always` hooks.
 
-A description of why this migration needs to occur.
+#### export always
+
+The `always` hooks runs every time `pgmg` is passed a migration file.  This hook is useful for checks or migrations that should be re-evaluated every time.  An example would be dynamically generated triggers or row level security policies that query the info schema for tables matching a given rule or predicate.
+
+It can also be useful for local development as your migration will run every time.
+
+#### export teardown
+
+The `teardown` hook is designed for local development only.  `pgmg` is a forward only migration tool, but for local development it can be handy to re-run the same migration continually and have some clean up logic to reset the db state so you can test your migration changes.
+
+`teardown` will only run if the `--dev` hook is passed to `pgmg`.
+
+#### export data
+
+You can insert or modify data in any of the above hooks, but it is recommended to do so in the `data` hook as it runs after your table has been modified.
+
+There's some cases where inserting data will create pending triggers, and when a table is pending triggers the table cannot be altered. So having a clean separation between altering tables and inserting data makes sense.
+
+You can skip insert data by passing `--schema-only`, and conversely you can skip all hooks except `data` by passing `--data-only`
 
 ## FAQ
 
@@ -154,7 +183,6 @@ If you wanted, your manifest could be json, or yaml, or whatever you want, as lo
 
 There's a few things I would like to add.
 
-- A dry run, that shows what changes will be made without actually applying them.
 - Optional verbose logging
 - Some simple commands for housekeeping:
     - Show existing migrations

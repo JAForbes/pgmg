@@ -37,6 +37,15 @@ Any files passed as arguments after the connection string will be imported as JS
 
 The only way to specify a connection is via a pg connection URL.
 
+--dev                       Runs any teardown hooks before running the 
+                            forward migration.
+
+--data-only                 Only runs the \`data\` hook.
+                            Does not update the \`pgmg.migration\` table.
+
+--schema-only               Skips the \`data\` hook.  But if you insert or
+                            modify data in other hooks, they will still run.
+
 --ssl 
     | --ssl                 Enables ssl
     | --ssl=prefer          Prefers ssl
@@ -50,6 +59,30 @@ The only way to specify a connection is via a pg connection URL.
 `
 
 
+const hookTypes = {
+    teardown:
+        { phase: 0, schemaOnly: true, dev: true }
+    ,cluster: 
+        { phase: 1, schemaOnly: true, record: true }
+    ,action: 
+        { phase: 2, schemaOnly: true, record: true }
+    ,transaction: 
+        { phase: 2, transaction: true, schemaOnly: true, record: true }
+    ,always: 
+        { phase: 2, schemaOnly: true, record: true, always: true }
+    ,data: 
+        { phase: 3, transaction: true, dev: false, dataOnly: true }
+}
+
+const hookPhases = Object.entries(hookTypes).reduce(
+    (p,[k, n]) => {
+        p[n.phase].push(
+            { name: k, ...n }
+        )
+        return p
+    }
+    ,[[], [], [], []]
+)
 
 async function main(){
     if( process.argv.length == 2 || argv.help ){
@@ -136,7 +169,6 @@ async function main(){
             return sql.unsafe(String.raw(strings, ...values))
         }
     }
-    
 
     {
         await app.resetConnection()
@@ -154,82 +186,104 @@ async function main(){
         `
     }
 
-    const always = []
-
     const migrations = 
         argv._.filter( x => x.endsWith('.js') || x.endsWith('.mjs') )
 
-    for ( let migration of migrations ) {
+    let recorded = []
+    for ( let hookPhase of hookPhases ) {
+
         // so SET EXAMPLE=on is reset per migration
         await app.resetConnection()
 
-        let module = await import(P.resolve(process.cwd(), migration))
-        if ( !module.name ) {
-            console.error('Migration', migration, 'did not export a name.')
-            process.exit(1)
-        } else if (!(
-            module.transaction 
-            || module.action 
-            || module.always 
-        )) {
-            console.error('Migration', migration, 'did not export a transaction or action function.')
-            process.exit(1)
-        }
-        let action = 
-            module.action 
-            || module.transaction && (SQL => SQL.begin( sql => {
-                sql.pgmg = u
-                sql.raw = Raw(sql)
-                sql.raw.pgmg = u
-                return module.transaction(sql)
-            }))
-
-        if( module.always ) {
-            always.push(module.always)
-        }
-
-        const [found] = await app.realSQL`
-            select * from pgmg.migration where name = ${module.name}
-        `
-        
-        let description = module.description ? module.description.split('\n').map( x => x.trim() ).filter(Boolean).join('\n') : null
-        if (!found && action){
-            try {
-                console.log('Running migration', migration)
-                await action(app.sql)
-                console.log('Migration complete')
-                await app.sql`
-                    insert into pgmg.migration(name, filename, description) 
-                    values (${module.name}, ${migration}, ${description})
-                `
-            } catch (e) {
-                console.error('Migration failed')
-                console.error(e)
+        for ( let migration of migrations ) {
+            let module = await import(P.resolve(process.cwd(), migration))
+            if ( !module.name ) {
+                console.error('Migration', migration, 'did not export a name.')
                 process.exit(1)
+            } else if (!(
+                module.transaction 
+                || module.action 
+                || module.always 
+                || module.cluster
+                || module.data
+                || module.teardown
+            )) {
+                console.error('Migration', migration, 'did not export lifecycle function (transaction|action|always|cluster|data).')
+                process.exit(1)
+            }
+
+            for ( 
+                let { 
+                    name:hook
+                    , transaction
+                    , dev
+                    , record
+                    , dataOnly
+                    , schemaOnly 
+                    , always
+                } of hookPhase
+            ) {
+
+                if (dev && !argv.dev) {
+                    continue;
+                }
+
+                if (dataOnly && !argv.dataOnly ){
+                    continue;
+                }
+
+                if (schemaOnly && !argv.schemaOnly ){
+                    continue;
+                }
+
+                let action;
+                if ( transaction ) {
+                    action = SQL => SQL.begin( sql => {
+                        sql.pgmg = u
+                        sql.raw = Raw(sql)
+                        sql.raw.pgmg = u
+                        return module.transaction(sql)
+                    })
+                } else {
+                    action = migration[hook]
+                }
+
+                const [found] = always
+                    ? [true] 
+                    : await app.realSQL`
+                        select * from pgmg.migration where name = ${module.name}
+                    `
+
+                let description = module.description 
+                    ? module.description.split('\n').map( x => x.trim() ).filter(Boolean).join('\n') 
+                    : null
+
+                if (!found && action){
+                    try {
+                        console.log('Running migration', migration)
+                        await action(app.sql)
+                        if( record ) {
+                            recorded.push( async () => {
+                                await app.sql`
+                                    insert into pgmg.migration(name, filename, description) 
+                                    values (${module.name}, ${migration}, ${description})
+                                `
+                            })
+                        }
+                        console.log('Migration complete')
+                        
+                    } catch (e) {
+                        console.error('Migration failed')
+                        console.error(e)
+                        process.exit(1)
+                    }
+                }
             }
         }
     }
 
-    // always are migration hooks that always run
-    // they run after the other migrations to guarantee
-    // any checks you perform in always are against the changes made in the prior transactions
-    // all always checks run within the same transaction
-    
-    if ( always.length ) {
-
-        try {
-            await app.sql.begin( async sql => {
-                sql.pgmg = u
-                sql.raw = Raw(sql)
-                sql.raw.pgmg = u
-                for( let f of always ) {
-                    await f(sql)
-                }
-            })
-        } catch (e) {
-            console.error(e.line)
-            throw e
-        }
+    for( let f of recorded ) {
+        await f()
     }
 
     await app.realSQL.end()
