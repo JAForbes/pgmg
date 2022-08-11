@@ -250,11 +250,17 @@ async function main(){
 
                 const [found] = always
                     ? [true] 
+                    // either match on hook for new migrations
+                    // or for old migrations just match on name
                     : await app.realSQL`
-                        select * 
+                        select migration_id
                         from pgmg.migration M
                         inner join pgmg.migration_hook H using(migration_id)
                         where (name, hook) = (${module.name}, ${hook})
+                        union all 
+                        select migration_id 
+                        from pgmg.migration M 
+                        where name = ${module.name} and created_at < '2022-08-11';
                     `
 
                 let description = module.description 
