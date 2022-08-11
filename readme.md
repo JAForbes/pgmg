@@ -81,7 +81,9 @@ The only way to specify a connection is via a pg connection URL.
                             modify data in other hooks, they will still run.
 
 --dev                       Runs any teardown hooks before running the 
-                            forward migration.
+                            forward migration.  Does not record new changes
+                            in the pgmg.migration tables so you can re-run
+                            new migrations multiple times.
 
 --ssl 
     | --ssl                 Enables ssl
