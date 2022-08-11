@@ -242,12 +242,12 @@ async function main(){
                 }
 
                 let action;
-                if ( transaction ) {
+                if ( transaction && module[hook] ) {
                     action = SQL => SQL.begin( sql => {
                         sql.pgmg = u
                         sql.raw = Raw(sql)
                         sql.raw.pgmg = u
-                        return module.transaction(sql)
+                        return module[hook](sql)
                     })
                 } else {
                     action = migration[hook]
@@ -257,7 +257,7 @@ async function main(){
                     await app.realSQL`
                         select migration_id
                         from pgmg.migration
-                        where name = ${module.name}'
+                        where name = ${module.name}
                     `
 
                 const [found] = always
@@ -273,7 +273,7 @@ async function main(){
                         select migration_id, false as dev
                         from pgmg.migration
                         where name = ${module.name}
-                        and created_at < '2022-08-11
+                        and created_at < '2022-08-11'
                         ;
                     `
 
