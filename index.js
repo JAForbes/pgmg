@@ -12,7 +12,7 @@ import dryPostgres from './dryPostgres.js'
 // expose argv like zx
 const pkg = M.createRequire(import.meta.url) ('./package.json')
 
-const help = 
+const help =
 `
 Usage: pgmg [PGMG OPTIONS] [CONNECTION] [OPTIONS] [FILES]
 Version: ${pkg.version}
@@ -20,7 +20,7 @@ Version: ${pkg.version}
 [PGMG OPTiONS]
 
 --help      Logs this help message
-        
+
 --version   Logs the current pgmg version
 
 [CONNECTION]
@@ -35,7 +35,7 @@ Any files passed as arguments after the connection string will be imported as JS
 
 The only way to specify a connection is via a pg connection URL.
 
---dev                       Runs any teardown hooks before running the 
+--dev                       Runs any teardown hooks before running the
                             forward migration.  Annotates the migration
                             record as \`dev\` so it will be re-run next time
                             as long as --dev is passed.
@@ -53,14 +53,14 @@ The only way to specify a connection is via a pg connection URL.
                             cluster level migrations, restores the backup into
                             the new database, then runs the remaining migrations.
 
---ssl 
+--ssl
     | --ssl                 Enables ssl
     | --ssl=prefer          Prefers ssl
     | --ssl=require         Requires ssl
     | --ssl=reject          Reject unauthorized connections
     | --ssl=no-reject       Do not reject unauthorized connections
     | --ssl=heroku          --no-ssl-reject if the host ends with a .com
-    
+
     For more detailed connection options, connect to postgres manually
     via -X
 `
@@ -74,8 +74,8 @@ const order = [
             { name: 'teardown', schemaOnly: true, skip: !argv.dev, ifExists: true }
             ,{ name: 'cluster', skip: argv.dataOnly, recordChange: true }
         ]
-    ] 
-    }    
+    ]
+    }
     ,{ name: 'restore', hooks: [], skip: !argv.restore }
     ,{ name: 'databaseMigrate'
     , hooks: [
@@ -83,12 +83,12 @@ const order = [
             { name: 'action', skip: argv.dataOnly, recordChange: true }
             , { name: 'transaction', transaction: true, skip: argv.dataOnly, recordChange: true }
             , { name: 'always', skip: argv.dataOnly, recordChange: true, always: true }
-            
-        ]         
+
+        ]
         ,[
             { name: 'data', transaction: true, dev: false, skip: argv.schemaOnly }
         ]
-    ] 
+    ]
     }
 ]
 
@@ -105,28 +105,28 @@ async function main(){
 
     let [connectionString] = argv._
 
-    let { 
+    let {
         ssl:theirSSL,
         dry=false
     } = argv
-    
+
 
     if ( theirSSL == 'heroku' ) {
         let hosts = []
         if (process.env.PGHOST) {
             hosts = process.env.PGHOST.split(',')
         } else if (connectionString ) {
-            hosts = 
+            hosts =
                 connectionString.split('@')[1].split('/')[0].split(',').map( x => x.split(':')[0])
         }
 
         theirSSL =
-            hosts.every( x => x.endsWith('.com') ) 
+            hosts.every( x => x.endsWith('.com') )
             ? 'no-reject'
             : false
     }
 
-    const ssl = 
+    const ssl =
         theirSSL == 'no-reject'
             ? { rejectUnauthorized: false }
         : theirSSL == 'reject'
@@ -134,7 +134,7 @@ async function main(){
         // inspired by: https://github.com/porsager/postgres/blob/master/lib/index.js#L577
         : theirSSL !== 'disabled' && theirSSL !== false && theirSSL
 
-        
+
     let app = {
 
         async resetConnection(){
@@ -146,7 +146,7 @@ async function main(){
 
             app.drySQL =
                 dryPostgres(app.realSQL)
-        
+
             app.sql = dry ? app.drySQL : app.realSQL
             app.sql.pgmg = u
             app.sql.raw = Raw(app.sql)
@@ -173,7 +173,7 @@ async function main(){
 
     function Raw(sql){
 
-        return function raw(strings, ...values){ 
+        return function raw(strings, ...values){
             return sql.unsafe(String.raw(strings, ...values))
         }
     }
@@ -202,7 +202,7 @@ async function main(){
         `
     }
 
-    const migrations = 
+    const migrations =
         argv._.filter( x => x.endsWith('.js') || x.endsWith('.mjs') )
 
     async function doHookPhase(hookPhase){
@@ -216,9 +216,9 @@ async function main(){
                 console.error('Migration', migration, 'did not export a name.')
                 process.exit(1)
             } else if (!(
-                module.transaction 
-                || module.action 
-                || module.always 
+                module.transaction
+                || module.action
+                || module.always
                 || module.cluster
                 || module.data
                 || module.teardown
@@ -227,8 +227,8 @@ async function main(){
                 process.exit(1)
             }
 
-            for ( 
-                let { 
+            for (
+                let {
                     name: hook
                     , transaction
                     , always
@@ -256,12 +256,12 @@ async function main(){
                 const [anyMigrationFound] =
                     await app.realSQL`
                         select migration_id
-                        from pgmg.migration 
+                        from pgmg.migration
                         where name = ${module.name}'
                     `
 
                 const [found] = always
-                    ? [{}] 
+                    ? [{}]
                     // either match on hook for new migrations
                     // or for old migrations just match on name
                     : await app.realSQL`
@@ -271,23 +271,23 @@ async function main(){
                         where (name, hook) = (${module.name}, ${hook})
                         union all
                         select migration_id, false as dev
-                        from pgmg.migration 
+                        from pgmg.migration
                         where name = ${module.name}
                         and created_at < '2022-08-11
                         ;
                     `
 
-                let description = module.description 
-                    ? module.description.split('\n').map( x => x.trim() ).filter(Boolean).join('\n') 
+                let description = module.description
+                    ? module.description.split('\n').map( x => x.trim() ).filter(Boolean).join('\n')
                     : null
 
                 const shouldContinue =
                     action
                     && (
-                        
+
                         // never ran before
-                        !found 
-                        
+                        !found
+
                         // ran before in dev mode and we are in dev mode again
                         || found.dev && argv.dev
 
@@ -302,7 +302,7 @@ async function main(){
 
                         if ( !argv.dev && recordChange ) {
                             await app.sql`
-                                insert into pgmg.migration(name, filename, description) 
+                                insert into pgmg.migration(name, filename, description)
                                 values (${module.name}, ${migration}, ${description})
                                 on conflict (migration_id) do nothing;
                             `
@@ -314,7 +314,7 @@ async function main(){
                             `
                         }
                         console.log('Migration complete')
-                        
+
                     } catch (e) {
                         console.error('Migration failed')
                         console.error(e)
@@ -328,7 +328,7 @@ async function main(){
     const [dbUrl, config] = pg
     const url =  new URL(dbUrl)
     const dbName = url.pathname.slice(1)
-    const clusterURL = 
+    const clusterURL =
         Object.assign(url, { pathname: '' })+''
 
     const clusterSQL = postgres(clusterURL, config)
@@ -356,7 +356,7 @@ async function main(){
 
 
 main()
-.catch( 
+.catch(
     e => {
         console.error(e)
         process.exit(1)
