@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-/* globals process, console */
-import minimist from 'minimist'
+/* globals process, console, URL */
+import { argv, $ } from 'zx'
 import postgres from 'postgres'
 import * as M from 'module'
 import * as P from 'path'
@@ -10,8 +10,6 @@ import * as u from './utils.js'
 import dryPostgres from './dryPostgres.js'
 
 // expose argv like zx
-const argv = minimist(process.argv.slice(2)) 
-
 const pkg = M.createRequire(import.meta.url) ('./package.json')
 
 const help = 
@@ -46,6 +44,11 @@ The only way to specify a connection is via a pg connection URL.
 --schema-only               Skips the \`data\` hook.  But if you insert or
                             modify data in other hooks, they will still run.
 
+--restore <file>            Restores a database backup.  Does the following:
+                            Drops the original db, creates a new db, runs
+                            cluster level migrations, restores the backup into
+                            the new database, then runs the remaining migrations.
+
 --ssl 
     | --ssl                 Enables ssl
     | --ssl=prefer          Prefers ssl
@@ -59,30 +62,31 @@ The only way to specify a connection is via a pg connection URL.
 `
 
 
-const hookTypes = {
-    teardown:
-        { phase: 0, schemaOnly: true, dev: true }
-    ,cluster: 
-        { phase: 1, schemaOnly: true, record: true }
-    ,action: 
-        { phase: 2, schemaOnly: true, record: true }
-    ,transaction: 
-        { phase: 2, transaction: true, schemaOnly: true, record: true }
-    ,always: 
-        { phase: 2, schemaOnly: true, record: true, always: true }
-    ,data: 
-        { phase: 3, transaction: true, dev: false, dataOnly: true }
-}
-
-const hookPhases = Object.entries(hookTypes).reduce(
-    (p,[k, n]) => {
-        p[n.phase].push(
-            { name: k, ...n }
-        )
-        return p
+const order = [
+    { name: 'dropCreate', hooks: [], skip: !argv.restore }
+    ,{ name: 'clusterMigrate'
+    , hooks: [
+        [
+            { name: 'teardown', schemaOnly: true, skip: !argv.dev }             
+            ,{ name: 'cluster', skip: argv.dataOnly, record: true }
+        ]
+    ] 
+    }    
+    ,{ name: 'restore', hooks: [], skip: !argv.restore }
+    ,{ name: 'databaseMigrate'
+    , hooks: [
+        [
+            { name: 'action', skip: argv.dataOnly, record: true }
+            , { name: 'transaction', transaction: true, skip: argv.dataOnly, record: true }
+            , { name: 'always', skip: argv.dataOnly, record: true, always: true }
+            
+        ]         
+        ,[
+            { name: 'data', transaction: true, dev: false, skip: argv.schemaOnly }
+        ]
+    ] 
     }
-    ,[[], [], [], []]
-)
+]
 
 async function main(){
     if( process.argv.length == 2 || argv.help ){
@@ -197,8 +201,7 @@ async function main(){
     const migrations = 
         argv._.filter( x => x.endsWith('.js') || x.endsWith('.mjs') )
 
-    let recorded = []
-    for ( let hookPhase of hookPhases ) {
+    async function doHookPhase(hookPhase){
 
         // so SET EXAMPLE=on is reset per migration
         await app.resetConnection()
@@ -224,22 +227,11 @@ async function main(){
                 let { 
                     name:hook
                     , transaction
-                    , dev
-                    , dataOnly
-                    , schemaOnly 
                     , always
+                    , skip
                 } of hookPhase
             ) {
-
-                if (dev && !argv.dev) {
-                    continue;
-                }
-
-                if (dataOnly && !argv.dataOnly ){
-                    continue;
-                }
-
-                if (schemaOnly && !argv.schemaOnly ){
+                if(skip) {
                     continue;
                 }
 
@@ -295,8 +287,30 @@ async function main(){
         }
     }
 
-    for( let f of recorded ) {
-        await f()
+    const [dbUrl, config] = pg
+    const url =  new URL(dbUrl)
+    const dbName = url.pathname.slice(1)
+    const clusterURL = 
+        Object.assign(url, { pathname: '' })+''
+
+    const clusterSQL = postgres(clusterURL, config)
+
+    for ( let { name: restorePhase, skip, hooks: hookPhases } of order ) {
+        if (skip) {
+            continue;
+        }
+
+        if (restorePhase == 'dropCreate' ) {
+            await clusterSQL`drop database if exists ${dbName}`
+            await clusterSQL`create database if exists ${dbName}`
+        } else if ( restorePhase == 'restore' ) {
+            await $ `pg_restore --verbose --clean --no-acl --no-owner -d ${clusterURL} ${argv.restore}`
+            break;
+        }
+
+        for( let hookPhase of hookPhases ) {
+            await doHookPhase(hookPhase)
+        }
     }
 
     await app.realSQL.end()
