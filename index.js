@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 /* globals process, console, URL */
-import { argv, $ } from 'zx'
+import { argv, $, glob } from 'zx'
 import postgres from 'postgres'
 import * as M from 'module'
 import * as P from 'path'
+import os from 'os'
 
 import * as u from './utils.js'
 import dryPostgres from './dryPostgres.js'
@@ -42,13 +43,18 @@ The only way to specify a connection is via a pg connection URL.
 
                             Only runs teardown hooks after 1 successful migration.
 
+--teardown                  Runs the teardown hook for migrations tagged as dev.
+                            Not to be used in production.  Will exit non zero
+                            if --dev flag is not also passed.
+
 --data-only                 Only runs the \`data\` hook.
                             Does not update the \`pgmg.migration\` table.
 
 --schema-only               Skips the \`data\` hook.  But if you insert or
                             modify data in other hooks, they will still run.
 
---restore <file>            Restores a database backup.  Does the following:
+--restore <file>            Restores a database backup and then runs migrations
+                            against it.  Does the following:
                             Drops the original db, creates a new db, runs
                             cluster level migrations, restores the backup into
                             the new database, then runs the remaining migrations.
@@ -65,32 +71,44 @@ The only way to specify a connection is via a pg connection URL.
     via -X
 `
 
-
-const order = [
-    { name: 'dropCreate', hooks: [], skip: !argv.restore }
-    ,{ name: 'clusterMigrate'
-    , hooks: [
-        [
-            { name: 'teardown', schemaOnly: true, skip: !argv.dev, ifExists: true }
-            ,{ name: 'cluster', skip: argv.dataOnly, recordChange: true }
-        ]
+const order =
+    argv.dev && argv.teardown
+    ? [
+        { name: 'setupPGMG', hooks: [] }
+        , { name: 'devTeardown'
+        , hooks: [[
+            { name: 'teardown', ifExists: true }
+        ,]]
+        }
+        ,{ name: 'removeDevMigrationRecords', hooks: [[]] }
     ]
-    }
-    ,{ name: 'restore', hooks: [], skip: !argv.restore }
-    ,{ name: 'databaseMigrate'
-    , hooks: [
-        [
-            { name: 'action', skip: argv.dataOnly, recordChange: true }
-            , { name: 'transaction', transaction: true, skip: argv.dataOnly, recordChange: true }
-            , { name: 'always', skip: argv.dataOnly, recordChange: true, always: true }
+    : [
+        { name: 'dropCreate', hooks: [], skip: !argv.restore }
+        ,{ name: 'setupPGMG', hooks: [] }
 
+        ,{ name: 'restore', hooks: [], skip: !argv.restore }
+        ,{ name: 'clusterMigrate'
+        , hooks: [
+            [
+                { name: 'teardown', schemaOnly: true, skip: !argv.dev, ifExists: true }
+                ,{ name: 'cluster', skip: argv.dataOnly, recordChange: true, ifHostDifferent: true }
+            ]
         ]
-        ,[
-            { name: 'data', transaction: true, dev: false, skip: argv.schemaOnly }
+        }
+        ,{ name: 'databaseMigrate'
+        , hooks: [
+            [
+                { name: 'action', skip: argv.dataOnly, recordChange: true }
+                , { name: 'transaction', transaction: true, skip: argv.dataOnly, recordChange: true }
+                , { name: 'always', skip: argv.dataOnly, recordChange: true, always: true }
+
+            ]
+            ,[
+                { name: 'data', transaction: true, dev: false, skip: argv.schemaOnly }
+            ]
         ]
+        }
     ]
-    }
-]
 
 async function main(){
     if( process.argv.length == 2 || argv.help ){
@@ -178,32 +196,14 @@ async function main(){
         }
     }
 
-    {
-        await app.resetConnection()
-        await app.realSQL.unsafe`
-            create extension if not exists pgcrypto;
-            create schema if not exists pgmg;
-            create table if not exists pgmg.migration (
-                migration_id uuid primary key default public.gen_random_uuid()
-                , name text not null
-                , filename text not null
-                , description text null
-                , created_at timestamptz not null default now()
-            )
-            ;
+    let migrations =
+        await Promise.all(
+            argv._.filter( x => x.endsWith('.js') || x.endsWith('.mjs') )
+                .map( x => glob(x) )
+        )
+        .then( x => x.flat() )
 
-            create table if not exists pgmg.migration_hook (
-                hook text not null
-                , migration_id uuid not null references pgmg.migration(migration_id)
-                , created_at timestamptz not null default now()
-                , dev boolean not null default false
-                , primary key (migration_id, hook)
-            );
-        `
-    }
 
-    const migrations =
-        argv._.filter( x => x.endsWith('.js') || x.endsWith('.mjs') )
 
     async function doHookPhase(hookPhase){
 
@@ -235,8 +235,10 @@ async function main(){
                     , skip
                     , recordChange
                     , ifExists
+                    , ifHostDifferent
                 } of hookPhase
             ) {
+
                 if(skip) {
                     continue;
                 }
@@ -250,7 +252,7 @@ async function main(){
                         return module[hook](sql)
                     })
                 } else {
-                    action = migration[hook]
+                    action = module[hook]
                 }
 
                 const [anyMigrationFound] =
@@ -265,12 +267,12 @@ async function main(){
                     // either match on hook for new migrations
                     // or for old migrations just match on name
                     : await app.realSQL`
-                        select M.migration_id, H.dev
+                        select M.migration_id, H.dev, H.hostname
                         from pgmg.migration M
-                        inner join pgmg.migration_hook H using(migration_id)
+                        inner join pgmg.migration_hook H using(name)
                         where (name, hook) = (${module.name}, ${hook})
                         union all
-                        select migration_id, false as dev
+                        select migration_id, false as dev, ${os.hostname()} as hostname
                         from pgmg.migration
                         where name = ${module.name}
                         and created_at < '2022-08-11'
@@ -286,13 +288,18 @@ async function main(){
                     && (
 
                         // never ran before
-                        !found
+                        !found && !ifExists
 
                         // ran before in dev mode and we are in dev mode again
-                        || found.dev && argv.dev
+                        || found && found.dev && argv.dev
 
                         // run if any migration exists, for teardown
                         || ifExists && anyMigrationFound
+
+                        ||  found 
+                            && ifHostDifferent 
+                            && found.hostname != os.hostname()
+                        
                     )
 
                 if (shouldContinue){
@@ -300,17 +307,23 @@ async function main(){
                         console.log('Running migration', migration)
                         await action(app.sql)
 
-                        if ( !argv.dev && recordChange ) {
+                        if ( recordChange ) {
                             await app.sql`
                                 insert into pgmg.migration(name, filename, description)
                                 values (${module.name}, ${migration}, ${description})
-                                on conflict (migration_id) do nothing;
+                                on conflict (name) do nothing;
                             `
                             await app.sql`
-                                insert into pgmg.migration_hook(hook, migration_id)
-                                select migration_id, ${hook} from pgmg.migration
-                                where (name, filename, description, dev) = (${module.name}, ${migration}, ${description}, ${!!argv.dev})
-                                on conflict (migration_id) do nothing;
+                                insert into pgmg.migration_hook(
+                                    hook, name, dev, hostname
+                                )
+                                values (
+                                    ${hook}
+                                    , ${module.name}
+                                    , ${!!argv.dev}
+                                    , ${os.hostname()}
+                                )
+                                on conflict (hook, name) do nothing;
                             `
                         }
                         console.log('Migration complete')
@@ -329,21 +342,62 @@ async function main(){
     const url =  new URL(dbUrl)
     const dbName = url.pathname.slice(1)
     const clusterURL =
-        Object.assign(url, { pathname: '' })+''
+        Object.assign(new URL(url), { pathname: '' })+''
 
-    const clusterSQL = postgres(clusterURL, config)
+    const clusterSQL =
+        postgres(clusterURL, { ...config, onnotice: console.error })
 
     for ( let { name: restorePhase, skip, hooks: hookPhases } of order ) {
         if (skip) {
             continue;
         }
 
-        if (restorePhase == 'dropCreate' ) {
-            await clusterSQL`drop database if exists ${dbName}`
-            await clusterSQL`create database if exists ${dbName}`
+        if (restorePhase == 'setupPGMG') {
+            await app.resetConnection()
+            await app.realSQL.unsafe`
+                create extension if not exists pgcrypto;
+                create schema if not exists pgmg;
+                create table if not exists pgmg.migration (
+                    migration_id uuid primary key default public.gen_random_uuid()
+                    , name text not null
+                    , filename text not null
+                    , description text null
+                    , created_at timestamptz not null default now()
+                )
+                ;
+
+                alter table pgmg.migration add unique (name)
+                ;
+
+                create table if not exists pgmg.migration_hook (
+                    hook text not null
+                    , name text not null references pgmg.migration(name) on delete cascade
+                    , created_at timestamptz not null default now()
+                    , dev boolean not null default false
+                    , hostname text not null
+                    , primary key (name, hook)
+                );
+            `
+        } else if (restorePhase == 'dropCreate' ) {
+            await clusterSQL.unsafe(`drop database if exists ${dbName};`)
+            await clusterSQL.unsafe(`create database ${dbName};`)
+            await app.resetConnection()
         } else if ( restorePhase == 'restore' ) {
-            await $ `pg_restore --verbose --clean --no-acl --no-owner -d ${clusterURL} ${argv.restore}`
-            break;
+            await $`pg_restore --verbose --clean -d ${dbUrl} ${argv.restore}`.nothrow()
+        } else if (restorePhase == 'removeDevMigrationRecords') {
+            await app.sql`
+                delete from pgmg.migration_hook where dev;
+            `
+            await app.sql`
+                delete from pgmg.migration M
+                where true
+                and created_at >= '2022-08-11'
+                and (
+                    select count(*) as n
+                    from pgmg.migration_hook H
+                    where M.name = H.name
+                ) = 0;
+            `
         }
 
         for( let hookPhase of hookPhases ) {
@@ -352,6 +406,7 @@ async function main(){
     }
 
     await app.realSQL.end()
+    await clusterSQL.end()
 }
 
 

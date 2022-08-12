@@ -129,6 +129,10 @@ An `action` export gets a raw sql instance.  And performs no rollbacks if there 
 
 The `cluster` hook is designed for cluster level migrations, like defining users/roles and server settings.  It runs before the `action` / `transaction` / `always` hooks.
 
+What makes `cluster` different to just another hook is that it will run if the recorded run was on a different hostname.  So if you download a prod snapshot, all the cluster snapshots will run again as they were originally run on a different server.
+
+When writing `cluster` hooks you should still not assume the roles etc you are creating do not already exist, as with any cluster level changes, you should never assume changes were not already applied by another service, system or even your own code on another branch.
+
 #### export always
 
 The `always` hooks runs every time `pgmg` is passed a migration file.  This hook is useful for checks or migrations that should be re-evaluated every time.  An example would be dynamically generated triggers or row level security policies that query the info schema for tables matching a given rule or predicate.
