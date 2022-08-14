@@ -207,10 +207,9 @@ async function main(){
 
     async function doHookPhase(hookPhase){
 
-        // so SET EXAMPLE=on is reset per migration
-        await app.resetConnection()
 
         for ( let migration of migrations ) {
+            await app.resetConnection()
             let module = await import(P.resolve(process.cwd(), migration))
             if ( !module.name ) {
                 console.error('Migration', migration, 'did not export a name.')
@@ -296,10 +295,10 @@ async function main(){
                         // run if any migration exists, for teardown
                         || ifExists && anyMigrationFound
 
-                        ||  found 
-                            && ifHostDifferent 
+                        ||  found
+                            && ifHostDifferent
                             && found.hostname != os.hostname()
-                        
+
                     )
 
                 if (shouldContinue){
