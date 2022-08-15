@@ -290,7 +290,8 @@ async function main(){
                         !found && !ifExists
 
                         // ran before in dev mode and we are in dev mode again
-                        || found && found.dev && argv.dev
+                        // skip migrations with no teardown
+                        || found && found.dev && argv.dev && module.teardown
 
                         // run if any migration exists, for teardown
                         || ifExists && anyMigrationFound
@@ -303,7 +304,7 @@ async function main(){
 
                 if (shouldContinue){
                     try {
-                        console.log('Running migration', migration)
+                        console.log(hook+'::'+migration)
                         await action(app.sql)
 
                         if ( recordChange ) {
@@ -325,7 +326,6 @@ async function main(){
                                 on conflict (hook, name) do nothing;
                             `
                         }
-                        console.log('Migration complete')
 
                     } catch (e) {
                         console.error('Migration failed')
@@ -406,6 +406,8 @@ async function main(){
 
     await app.realSQL.end()
     await clusterSQL.end()
+
+    console.log('Migration complete')
 }
 
 
