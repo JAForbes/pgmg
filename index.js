@@ -278,6 +278,18 @@ async function main(){
                         ;
                     `
 
+                const [anyDevHookFound] = always
+                    ? [{}]
+                    // either match on hook for new migrations
+                    // or for old migrations just match on name
+                    : await app.realSQL`
+                        select M.migration_id, H.dev, H.hostname
+                        from pgmg.migration M
+                        inner join pgmg.migration_hook H using(name)
+                        where (name, dev) = (${module.name}, true)
+                        ;
+                    `
+
                 let description = module.description
                     ? module.description.split('\n').map( x => x.trim() ).filter(Boolean).join('\n')
                     : null
@@ -294,7 +306,7 @@ async function main(){
                         || found && found.dev && argv.dev && module.teardown
 
                         // run if any migration exists, for teardown
-                        || ifExists && anyMigrationFound
+                        || ifExists && anyMigrationFound && anyDevHookFound
 
                         ||  found
                             && ifHostDifferent
