@@ -308,16 +308,20 @@ async function main(){
                         // run if any migration exists, for teardown
                         || ifExists && anyMigrationFound && anyDevHookFound
 
+                        // or it is a cluster hook but it ran on a different hostname
+                        // and this hook previously ran in prod mode or we are also
+                        // in dev mode
                         ||  found
                             && ifHostDifferent
                             && found.hostname != os.hostname()
+                            && found.dev === argv.dev
 
                     )
 
                 if (shouldContinue){
                     try {
                         console.log(hook+'::'+migration)
-                        await action(app.sql)
+                        await action(app.sql, { dev: argv.dev })
 
                         if ( recordChange ) {
                             await app.sql`
