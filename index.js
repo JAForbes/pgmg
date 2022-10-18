@@ -421,6 +421,7 @@ async function main(){
                         console.log(hook+'::'+migration)
                         await app.sql.unsafe(`reset role`)
                         if (module.managedUsers && !['cluster','teardown'].includes(hook)){
+                            console.log('about to set role to',roles.migration, hook)
                             await app.sql.unsafe(`set role ${roles.migration}`)
                         }
                         await action(app.sql, { dev: argv.dev, roles })
