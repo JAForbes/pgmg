@@ -400,7 +400,7 @@ async function main(){
                         // or it is a cluster hook that has run before but
                         // we have no trace of a cluster user so it hasn't
                         // run on this machine
-                        || found && (
+                        || found && hook === 'cluster' && (
                             autoMigrationUserEnabled
                             ? ifNoMigrationUser && noMigrationUserFound
                             : hostIsDifferent
@@ -415,6 +415,9 @@ async function main(){
                     , hostIsDifferent
                     , anyDevHookFound
                     , shouldContinue
+                    , ifExists
+                    , ifNoMigrationUser
+                    , noMigrationUserFound
                 })
                 if (shouldContinue){
                     try {
