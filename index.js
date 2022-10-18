@@ -270,8 +270,6 @@ async function main(){
 
             const roles = { migration: migration_user, service: service_user }
 
-            console.log({ roles, name_slug })
-
             if(argv.dev) {
                 await teardown_pgmg_objects(app.realSQL, {migration_user, service_user})
             }
@@ -282,7 +280,9 @@ async function main(){
                 where usename = ${roles.migration};
             `
 
-            await create_pgmg_objects(app.realSQL, {migration_user, service_user})
+            if (module.managedUsers) {
+                await create_pgmg_objects(app.realSQL, {migration_user, service_user})
+            }
 
             for (
                 let {
