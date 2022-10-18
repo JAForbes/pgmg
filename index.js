@@ -211,15 +211,13 @@ async function main(){
     async function teardown_pgmg_objects(sql, {migration_user, service_user}){
         for (let target of [migration_user, service_user]) {
 
-            console.log('about to teardown',target)
             const [found] = await sql`
                 select rolname
                 from pg_catalog.pg_roles
                 where rolname = ${target};
             `
-            console.log('found',target,'so tearing down', found)
+
             if ( found ) {
-                console.log('dropping...', target)
                 await sql.unsafe(`drop owned by ${target}`)
                 await sql.unsafe(`drop role ${target}`)
             }
@@ -393,21 +391,6 @@ async function main(){
                         )
 
                     )
-
-                console.log({
-                    shouldContinue
-                    ,'found': found
-                    ,'ifExists': ifExists
-                    ,'module.teardown': module.teardown
-                    ,anyMigrationFound
-                    ,anyDevHookFound
-                    ,hook
-                    ,autoMigrationUserEnabled
-                    ,ifNoMigrationUser
-                    ,noMigrationUserFound
-                    ,hostIsDifferent
-                    ,migration
-                })
 
                 if (shouldContinue){
                     try {
