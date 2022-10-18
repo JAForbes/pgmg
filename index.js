@@ -403,6 +403,7 @@ async function main(){
                     ,ifNoMigrationUser
                     ,noMigrationUserFound
                     ,hostIsDifferent
+                    ,migration
                 })
 
                 if (shouldContinue){
