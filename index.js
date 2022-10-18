@@ -220,7 +220,7 @@ async function main(){
             console.log('found',target,'so tearing down', found)
             if ( found ) {
                 console.log('dropping...', target)
-                await sql.unsafe(`drop owned by ${target}`)
+                await sql.unsafe(`drop owned by ${target} cascade`)
                 await sql.unsafe(`drop role ${target}`)
             }
         }
