@@ -251,6 +251,7 @@ async function main(){
 
 
         for ( let migration of migrations ) {
+            console.log('migration', migration)
             await app.resetConnection()
             let rawModule = await import(P.resolve(process.cwd(), migration))
             if ( !rawModule.name ) {
@@ -287,11 +288,16 @@ async function main(){
                 }
                 : rawModule
 
+            
+            console.log('module')
+
             const name_slug = slugify(module.name)
             const migration_user = 'pgmg_migration_' + name_slug
             const service_user = 'pgmg_service_' + name_slug
 
             const roles = { migration: migration_user, service: service_user }
+
+            console.log({roles})
 
             const noMigrationUserFound = await app.realSQL`
                 select usename
@@ -311,6 +317,8 @@ async function main(){
                 } of hookPhase
             ) {
 
+                console.log('hook', hook)
+
                 if(skip) {
                     continue;
                 }
@@ -326,6 +334,8 @@ async function main(){
                 } else {
                     action = module[hook]
                 }
+
+                console.log('action', action)
 
                 const [anyMigrationFound] =
                     await app.realSQL`
@@ -398,6 +408,14 @@ async function main(){
 
                     )
 
+                console.log({
+                    anyMigrationFound 
+                    , found 
+                    , autoMigrationUserEnabled
+                    , hostIsDifferent
+                    , anyDevHookFound
+                    , shouldContinue
+                })
                 if (shouldContinue){
                     try {
                         console.log(hook+'::'+migration)
@@ -500,6 +518,7 @@ async function main(){
         }
 
         for( let hookPhase of hookPhases ) {
+            console.log('hook phase', hookPhase)
             await doHookPhase(hookPhase)
         }
     }
