@@ -211,12 +211,15 @@ async function main(){
     async function teardown_pgmg_objects(sql, {migration_user, service_user}){
         for (let target of [migration_user, service_user]) {
 
+            console.log('about to teardown',target)
             const [found] = await sql`
                 select usename
                 from pg_catalog.pg_user
                 where usename = ${target};
             `
+            console.log('found',target,'so tearing down', found)
             if ( found ) {
+                console.log('dropping...', target)
                 await sql.unsafe(`drop owned by ${target}`)
                 await sql.unsafe(`drop role ${target}`)
             }
