@@ -247,22 +247,38 @@ async function main(){
 
         for ( let migration of migrations ) {
             await app.resetConnection()
-            let module = await import(P.resolve(process.cwd(), migration))
-            if ( !module.name ) {
+            let rawModule = await import(P.resolve(process.cwd(), migration))
+            if ( !rawModule.name ) {
                 console.error('Migration', migration, 'did not export a name.')
                 process.exit(1)
             } else if (!(
-                module.transaction
-                || module.action
-                || module.always
-                || module.cluster
-                || module.data
-                || module.teardown
+                rawModule.transaction
+                || rawModule.action
+                || rawModule.always
+                || rawModule.cluster
+                || rawModule.data
+                || rawModule.teardown
             )) {
                 console.error('Migration', migration, 'did not export lifecycle function (transaction|action|always|cluster|data).')
                 process.exit(1)
             }
 
+            const module = 
+                rawModule.managedUsers
+                ? {
+                    ...rawModule
+                    ,async teardown (...args) {
+                        if(argv.dev) {
+                            await teardown_pgmg_objects(app.realSQL, {migration_user, service_user})
+                            await rawModule.teardown?.(...args)
+                        }
+                    }
+                    ,async cluster(...args) {    
+                        await create_pgmg_objects(app.realSQL, {migration_user, service_user})
+                        await rawModule.cluster?.(...args)
+                    }
+                }
+                : rawModule
 
             const name_slug = slugify(module.name)
             const migration_user = 'pgmg_migration_' + name_slug
@@ -270,19 +286,11 @@ async function main(){
 
             const roles = { migration: migration_user, service: service_user }
 
-            if(argv.dev) {
-                await teardown_pgmg_objects(app.realSQL, {migration_user, service_user})
-            }
-
             const noMigrationUserFound = await app.realSQL`
                 select usename
                 from pg_catalog.pg_user
                 where usename = ${roles.migration};
             `
-
-            if (module.managedUsers) {
-                await create_pgmg_objects(app.realSQL, {migration_user, service_user})
-            }
 
             for (
                 let {
