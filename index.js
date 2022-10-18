@@ -225,23 +225,19 @@ async function main(){
     async function create_pgmg_objects(sql, {migration_user, service_user}){
         for (let target of [migration_user, service_user]) {
 
-            console.log('checking if',target,'exists')
             const [found] = await sql`
                 select usename
                 from pg_catalog.pg_user
                 where usename = ${target};
             `
-            console.log(target, found)
 
             if (found) {
                 throw new Error('pgmg managed role already exists: ' + target)
             }
 
             if ( target === migration_user ) {
-                console.log('creating',target)
                 await sql.unsafe(`create role ${target} with superuser nologin`)
             } else if (target === service_user ) {
-                console.log('creating',target)
                 await sql.unsafe(`create role ${target} with noinherit nologin nocreatedb nocreaterole nosuperuser noreplication nobypassrls`)
             }
         }
@@ -251,7 +247,6 @@ async function main(){
 
 
         for ( let migration of migrations ) {
-            console.log('migration', migration)
             await app.resetConnection()
             let rawModule = await import(P.resolve(process.cwd(), migration))
             if ( !rawModule.name ) {
@@ -274,22 +269,17 @@ async function main(){
                 ? {
                     ...rawModule
                     ,async teardown (...args) {
-                        console.log('running generated teardown')
                         if(argv.dev) {
                             await teardown_pgmg_objects(args[0], {migration_user, service_user})
                             await rawModule.teardown?.(...args)
                         }
                     }
                     ,async cluster(...args) {    
-                        console.log('running generated cluster')
                         await create_pgmg_objects(args[0], {migration_user, service_user})
                         await rawModule.cluster?.(...args)
                     }
                 }
                 : rawModule
-
-            
-            console.log('module', module)
 
             const name_slug = slugify(module.name)
             const migration_user = 'pgmg_migration_' + name_slug
@@ -297,9 +287,7 @@ async function main(){
 
             const roles = { migration: migration_user, service: service_user }
 
-            console.log({roles})
-
-            const noMigrationUserFound = await app.realSQL`
+            const [noMigrationUserFound] = await app.realSQL`
                 select usename
                 from pg_catalog.pg_user
                 where usename = ${roles.migration};
@@ -317,8 +305,6 @@ async function main(){
                 } of hookPhase
             ) {
 
-                console.log('hook', hook)
-
                 if(skip) {
                     continue;
                 }
@@ -334,9 +320,6 @@ async function main(){
                 } else {
                     action = module[hook]
                 }
-
-                console.log('action', action+'')
-
                 const [anyMigrationFound] =
                     await app.realSQL`
                         select migration_id
@@ -408,23 +391,11 @@ async function main(){
 
                     )
 
-                console.log({
-                    anyMigrationFound 
-                    , found 
-                    , autoMigrationUserEnabled
-                    , hostIsDifferent
-                    , anyDevHookFound
-                    , shouldContinue
-                    , ifExists
-                    , ifNoMigrationUser
-                    , noMigrationUserFound
-                })
                 if (shouldContinue){
                     try {
                         console.log(hook+'::'+migration)
                         await app.sql.unsafe(`reset role`)
                         if (module.managedUsers && !['cluster','teardown'].includes(hook)){
-                            console.log('about to set role to',roles.migration, hook)
                             await app.sql.unsafe(`set role ${roles.migration}`)
                         }
                         await action(app.sql, { dev: argv.dev, roles })
@@ -522,7 +493,6 @@ async function main(){
         }
 
         for( let hookPhase of hookPhases ) {
-            console.log('hook phase', hookPhase)
             await doHookPhase(hookPhase)
         }
     }
