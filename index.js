@@ -225,18 +225,23 @@ async function main(){
     async function create_pgmg_objects(sql, {migration_user, service_user}){
         for (let target of [migration_user, service_user]) {
 
+            console.log('checking if',target,'exists')
             const [found] = await sql`
                 select usename
                 from pg_catalog.pg_user
                 where usename = ${target};
             `
+            console.log(target, found)
+
             if (found) {
                 throw new Error('pgmg managed role already exists: ' + target)
             }
 
             if ( target === migration_user ) {
+                console.log('creating',target)
                 await sql.unsafe(`create role ${target} with superuser nologin`)
             } else if (target === service_user ) {
+                console.log('creating',target)
                 await sql.unsafe(`create role ${target} with noinherit nologin nocreatedb nocreaterole nosuperuser noreplication nobypassrls`)
             }
         }
@@ -268,12 +273,14 @@ async function main(){
                 ? {
                     ...rawModule
                     ,async teardown (...args) {
+                        console.log('running generated teardown')
                         if(argv.dev) {
                             await teardown_pgmg_objects(app.realSQL, {migration_user, service_user})
                             await rawModule.teardown?.(...args)
                         }
                     }
                     ,async cluster(...args) {    
+                        console.log('running generated cluster')
                         await create_pgmg_objects(app.realSQL, {migration_user, service_user})
                         await rawModule.cluster?.(...args)
                     }
