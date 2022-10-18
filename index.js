@@ -213,9 +213,9 @@ async function main(){
 
             console.log('about to teardown',target)
             const [found] = await sql`
-                select usename
-                from pg_catalog.pg_user
-                where usename = ${target};
+                select rolname
+                from pg_catalog.pg_roles
+                where rolname = ${target};
             `
             console.log('found',target,'so tearing down', found)
             if ( found ) {
@@ -229,9 +229,9 @@ async function main(){
         for (let target of [migration_user, service_user]) {
 
             const [found] = await sql`
-                select usename
-                from pg_catalog.pg_user
-                where usename = ${target};
+                select rolname
+                from pg_catalog.pg_roles
+                where rolname = ${target};
             `
 
             if (found) {
@@ -291,9 +291,9 @@ async function main(){
             const roles = { migration: migration_user, service: service_user }
 
             const [noMigrationUserFound] = await app.realSQL`
-                select usename
-                from pg_catalog.pg_user
-                where usename = ${roles.migration};
+                select rolname
+                from pg_catalog.pg_roles
+                where rolname = ${roles.migration};
             `
 
             for (
