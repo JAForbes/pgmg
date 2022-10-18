@@ -391,6 +391,20 @@ async function main(){
 
                     )
 
+                console.log({
+                    shouldContinue
+                    ,'found': found
+                    ,'ifExists': ifExists
+                    ,'module.teardown': module.teardown
+                    ,anyMigrationFound
+                    ,anyDevHookFound
+                    ,hook
+                    ,autoMigrationUserEnabled
+                    ,ifNoMigrationUser
+                    ,noMigrationUserFound
+                    ,hostIsDifferent
+                })
+
                 if (shouldContinue){
                     try {
                         console.log(hook+'::'+migration)
