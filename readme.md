@@ -40,7 +40,7 @@ npx pgmg "$DATABASE_URL" "migrations/first-migrations.mjs"
 - A forward only, idempotent, postgres migration tool, with minimal noise but also minimal magic
 - OOTB support for postgres.js, we pass in a preconfigured postgres.js instance just point us at migration files
 - A simple migration file format, just export a transaction function a name and a description
-- All metadata stored in 1 simple table in the same database that you are migrating, makes it easy to get fine-grained control
+- All metadata stored in 1 schema in the same database that you are migrating, makes it easy to get fine-grained control
 
 ## How
 
@@ -152,6 +152,56 @@ You can insert or modify data in any of the above hooks, but it is recommended t
 There's some cases where inserting data will create pending triggers, and when a table is pending triggers the table cannot be altered. So having a clean separation between altering tables and inserting data makes sense.
 
 You can skip insert data by passing `--schema-only`, and conversely you can skip all hooks except `data` by passing `--data-only`
+
+## Experimental
+
+### User Management
+
+We are currently experimenting with pgmg managing users declaritively and auto creating migration and service roles per migration.  This way you can easily teardown a migration via `drop owned by`.
+
+You can also assign new permissions to an existing user by assigning the service role to the target user.  If this is managed automatically by pgmg you can avoid a lot of complexity in migration clean up for local development, but also in user permission management as you can revoke a migrations grants by revoking the generated service role from the target role.
+
+Of course, this is hyper opinionated and the original goal for pgmg was to be pretty simple so we'll keep this opt in for a while.  But we tend to build for our needs not an imagined ideal so if it works, it will likely land in core.
+
+#### roles
+
+These pgmg managed roles can be accessed in the options object passed as a second argument to your migration hooks
+
+```js
+export function actions(sql, { roles }){
+    await sql`grant ${roles.service} to my_pg_user`
+}
+```
+
+#### Migration Role
+
+Each migration has an auto generated super user role named `pgmg_migration_{name}` where name is taken from your unique migration name.  Before any of your migration hooks run, pgmg will `set role` to the migration role so that any created objects are tied to the migration role, not the connection role (usually the `postgres` super user).
+
+If you are running pgmg with the `--dev` flag then a teardown hook will automatically be applied which destroys any objects created by that migration user.
+
+For now this is opt in via `export const options = { migration_role: true }`
+
+#### Service Role
+
+Each migration has an auto generated service role named `pgmg_service_{name}` where name is taken from your unique migration name.  It is recommend to assign any grants or RLS policies to the service role.
+
+If you are running pgmg with the `--dev` then a teardown hook will automatically be applied with destroys any objects granted to the service user.
+
+You are encouraged to manually grant the service user to an actual postgres service user in your app.  E.g. if you had a postgres user used by a photo processing service you might run this line somewhere in your cluster hook.
+
+```js
+await sql`grant ${sql(roles.service)} to photo_processing`
+```
+
+By default the service role has no permissions, and must be explicitly granted in your `cluster` hook.  Alternatively you can use the experimental declarative format.
+
+#### Magic
+
+For local development, if pgmg detects a service user already exists we assume the teardown hook needs to run for that migration.  The only reason a service/migration user would still exist would be if there was a crash or early exit before pgmg finished cleaning up.  This mechanism is also how pgmg tracks if the cluster hook needs to re-run on a new machine.
+
+#### Production Usage
+
+The migration/service users make local development far simpler as you can run migrations on a loop
 
 ## FAQ
 

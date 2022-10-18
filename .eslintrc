@@ -62,7 +62,7 @@
 		"max-len": [
 			"warn",
 			{
-				"code": 80,
+				"code": 100,
 				"tabWidth": 2,
 				"ignoreStrings": true,
 				"ignoreTemplateLiterals": true,

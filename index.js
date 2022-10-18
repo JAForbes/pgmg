@@ -91,16 +91,16 @@ const order =
         , hooks: [
             [
                 { name: 'teardown', schemaOnly: true, skip: !argv.dev, ifExists: true }
-                ,{ name: 'cluster', skip: argv.dataOnly, recordChange: true, ifHostDifferent: true }
+                ,{ name: 'cluster', skip: argv.dataOnly, rememberChange: true, ifNoMigrationUser: true }
             ]
         ]
         }
         ,{ name: 'databaseMigrate'
         , hooks: [
             [
-                { name: 'action', skip: argv.dataOnly, recordChange: true }
-                , { name: 'transaction', transaction: true, skip: argv.dataOnly, recordChange: true }
-                , { name: 'always', skip: argv.dataOnly, recordChange: true, always: true }
+                { name: 'action', skip: argv.dataOnly, rememberChange: true }
+                , { name: 'transaction', transaction: true, skip: argv.dataOnly, rememberChange: true }
+                , { name: 'always', skip: argv.dataOnly, rememberChange: true, always: true }
 
             ]
             ,[
@@ -109,6 +109,10 @@ const order =
         ]
         }
     ]
+
+function slugify(s){
+    return s.split('\n').join('').trim().toLowerCase().replace(/\-|\s/g, '_')
+}
 
 async function main(){
     if( process.argv.length == 2 || argv.help ){
@@ -204,6 +208,39 @@ async function main(){
         .then( x => x.flat() )
 
 
+    async function teardown_pgmg_objects(sql, {migration_user, service_user}){
+        for (let target of [migration_user, service_user]) {
+
+            const [found] = await sql`
+                select usename
+                from pg_catalog.pg_user
+                where usename = ${target};
+            `
+            if ( found ) {
+                await sql.unsafe(`drop owned by ${target}`)
+                await sql.unsafe(`drop role ${target}`)
+            }
+        }
+    }
+    async function create_pgmg_objects(sql, {migration_user, service_user}){
+        for (let target of [migration_user, service_user]) {
+
+            const [found] = await sql`
+                select usename
+                from pg_catalog.pg_user
+                where usename = ${target};
+            `
+            if (found) {
+                throw new Error('pgmg managed role already exists: ' + target)
+            }
+
+            if ( target === migration_user ) {
+                await sql.unsafe(`create role ${target} with superuser nologin`)
+            } else if (target === service_user ) {
+                await sql.unsafe(`create role ${target} with noinherit nologin nocreatedb nocreaterole nosuperuser noreplication nobypassrls`)
+            }
+        }
+    }
 
     async function doHookPhase(hookPhase){
 
@@ -226,15 +263,34 @@ async function main(){
                 process.exit(1)
             }
 
+
+            const name_slug = slugify(module.name)
+            const migration_user = 'pgmg_migration_' + name_slug
+            const service_user = 'pgmg_service_' + name_slug
+
+            const roles = { migration: migration_user, service: service_user }
+
+            if(argv.dev) {
+                await teardown_pgmg_objects(app.realSQL, {migration_user, service_user})
+            }
+
+            const noMigrationUserFound = await app.realSQL`
+                select usename
+                from pg_catalog.pg_user
+                where usename = ${roles.migration_user};
+            `
+
+            await create_pgmg_objects(app.realSQL, {migration_user, service_user})
+
             for (
                 let {
                     name: hook
                     , transaction
                     , always
                     , skip
-                    , recordChange
+                    , rememberChange
                     , ifExists
-                    , ifHostDifferent
+                    , ifNoMigrationUser
                 } of hookPhase
             ) {
 
@@ -278,6 +334,12 @@ async function main(){
                         ;
                     `
 
+                const autoMigrationUserEnabled = 
+                    module.managedUsers
+
+                const hostIsDifferent = 
+                    os.hostname() !== found.hostname
+
                 const [anyDevHookFound] = always
                     ? [{}]
                     // either match on hook for new migrations
@@ -308,22 +370,24 @@ async function main(){
                         // run if any migration exists, for teardown
                         || ifExists && anyMigrationFound && anyDevHookFound
 
-                        // or it is a cluster hook but it ran on a different hostname
-                        // and this hook previously ran in prod mode or we are also
-                        // in dev mode
-                        ||  found
-                            && ifHostDifferent
-                            && found.hostname != os.hostname()
-                            && found.dev === argv.dev
+                        // or it is a cluster hook that has run before but
+                        // we have no trace of a cluster user so it hasn't
+                        // run on this machine
+                        || found && (
+                            autoMigrationUserEnabled
+                            ? ifNoMigrationUser && noMigrationUserFound
+                            : hostIsDifferent
+                        )
 
                     )
 
                 if (shouldContinue){
                     try {
                         console.log(hook+'::'+migration)
-                        await action(app.sql, { dev: argv.dev })
-
-                        if ( recordChange ) {
+                        await app.sql.unsafe(`set role ${roles.migration}`)
+                        await action(app.sql, { dev: argv.dev, roles })
+                        await app.sql.unsafe(`reset role`)
+                        if ( rememberChange ) {
                             await app.sql`
                                 insert into pgmg.migration(name, filename, description)
                                 values (${module.name}, ${migration}, ${description})
