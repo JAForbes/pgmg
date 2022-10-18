@@ -273,8 +273,8 @@ async function main(){
                     ...rawModule
                     ,async teardown (...args) {
                         if(argv.dev) {
-                            await teardown_pgmg_objects(args[0], {migration_user, service_user})
                             await rawModule.teardown?.(...args)
+                            await teardown_pgmg_objects(args[0], {migration_user, service_user})
                         }
                     }
                     ,async cluster(...args) {    
