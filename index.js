@@ -386,7 +386,10 @@ async function main(){
                 if (shouldContinue){
                     try {
                         console.log(hook+'::'+migration)
-                        await app.sql.unsafe(`set role ${roles.migration}`)
+                        await app.sql.unsafe(`reset role`)
+                        if (module.managedUsers){
+                            await app.sql.unsafe(`set role ${roles.migration}`)
+                        }
                         await action(app.sql, { dev: argv.dev, roles })
                         await app.sql.unsafe(`reset role`)
                         if ( rememberChange ) {
