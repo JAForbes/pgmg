@@ -276,20 +276,20 @@ async function main(){
                     ,async teardown (...args) {
                         console.log('running generated teardown')
                         if(argv.dev) {
-                            await teardown_pgmg_objects(app.realSQL, {migration_user, service_user})
+                            await teardown_pgmg_objects(args[0], {migration_user, service_user})
                             await rawModule.teardown?.(...args)
                         }
                     }
                     ,async cluster(...args) {    
                         console.log('running generated cluster')
-                        await create_pgmg_objects(app.realSQL, {migration_user, service_user})
+                        await create_pgmg_objects(args[0], {migration_user, service_user})
                         await rawModule.cluster?.(...args)
                     }
                 }
                 : rawModule
 
             
-            console.log('module')
+            console.log('module', module)
 
             const name_slug = slugify(module.name)
             const migration_user = 'pgmg_migration_' + name_slug
@@ -335,7 +335,7 @@ async function main(){
                     action = module[hook]
                 }
 
-                console.log('action', action)
+                console.log('action', action+'')
 
                 const [anyMigrationFound] =
                     await app.realSQL`
@@ -420,7 +420,7 @@ async function main(){
                     try {
                         console.log(hook+'::'+migration)
                         await app.sql.unsafe(`reset role`)
-                        if (module.managedUsers){
+                        if (module.managedUsers && !['cluster','teardown'].includes(hook)){
                             await app.sql.unsafe(`set role ${roles.migration}`)
                         }
                         await action(app.sql, { dev: argv.dev, roles })
