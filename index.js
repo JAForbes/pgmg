@@ -340,7 +340,7 @@ async function main(){
                     module.managedUsers
 
                 const hostIsDifferent = 
-                    os.hostname() !== found.hostname
+                    os.hostname() !== found?.hostname
 
                 const [anyDevHookFound] = always
                     ? [{}]
