@@ -325,11 +325,11 @@ async function main(){
 
                 let action;
                 if ( transaction && module[hook] ) {
-                    action = SQL => SQL.begin( sql => {
+                    action = (SQL, ...args) => SQL.begin( sql => {
                         sql.pgmg = u
                         sql.raw = Raw(sql)
                         sql.raw.pgmg = u
-                        return module[hook](sql)
+                        return module[hook](sql, ...args)
                     })
                 } else {
                     action = module[hook]
