@@ -110,6 +110,11 @@ const order =
         }
     ]
 
+// so I can override it easily for debugging
+function getHostName(){
+    return process.env.HOSTNAME || process.env.HOST || os.hostname()
+}
+
 function slugify(s){
     return s.split('\n').join('').trim().toLowerCase().replace(/\-|\s/g, '_')
 }
@@ -288,11 +293,12 @@ async function main(){
 
             const roles = { migration: migration_user, service: service_user }
 
-            const [noMigrationUserFound] = await app.realSQL`
+            const [migrationUserFound] = await app.realSQL`
                 select rolname
                 from pg_catalog.pg_roles
                 where rolname = ${roles.migration};
             `
+            const noMigrationUserFound = !migrationUserFound
 
             for (
                 let {
@@ -338,7 +344,7 @@ async function main(){
                         inner join pgmg.migration_hook H using(name)
                         where (name, hook) = (${module.name}, ${hook})
                         union all
-                        select migration_id, false as dev, ${os.hostname()} as hostname
+                        select migration_id, false as dev, ${getHostName()} as hostname
                         from pgmg.migration
                         where name = ${module.name}
                         and created_at < '2022-08-11'
@@ -349,7 +355,7 @@ async function main(){
                     module.managedUsers
 
                 const hostIsDifferent = 
-                    os.hostname() !== found?.hostname
+                    getHostName() !== found?.hostname
 
                 const [anyDevHookFound] = always
                     ? [{}]
@@ -415,7 +421,7 @@ async function main(){
                                     ${hook}
                                     , ${module.name}
                                     , ${!!argv.dev}
-                                    , ${os.hostname()}
+                                    , ${getHostName()}
                                 )
                                 on conflict (hook, name) do nothing;
                             `
