@@ -223,7 +223,7 @@ async function main(){
             `
 
             if ( found ) {
-                await sql.unsafe(`drop owned by ${target}`)
+                await sql.unsafe(`drop owned by ${target} cascade`)
                 await sql.unsafe(`drop role ${target}`)
             }
         }
