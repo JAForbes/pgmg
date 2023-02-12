@@ -165,9 +165,20 @@ async function main(){
     let app = {
 
         async resetConnection(){
+            if (clusterSQL) {
+                await clusterSQL`
+                    select pg_cancel_backend(pid)
+                    from pg_stat_activity
+                    where state = 'active' and pid <> pg_backend_pid();
+                `
+                await clusterSQL.end()
+                clusterSQL = postgres(clusterURL, { ...config, onnotice: console.error })
+            }
             if( app.sql ) {
                 await app.sql.end()
+                await app.realSQL?.end()
             }
+
 
             app.realSQL = RealSQL()
 
@@ -221,7 +232,6 @@ async function main(){
                 from pg_catalog.pg_roles
                 where rolname = ${target};
             `
-
             if ( found ) {
                 await sql.unsafe(`drop owned by ${target} cascade`)
                 await sql.unsafe(`drop role ${target}`)
@@ -238,7 +248,10 @@ async function main(){
             `
 
             if (found) {
-                throw new Error('pgmg managed role already exists: ' + target)
+                if (!argv.dev) {
+                    throw new Error('pgmg managed role already exists: ' + target)
+                }
+                return;
             }
 
             if ( target === migration_user ) {
@@ -270,7 +283,7 @@ async function main(){
                 process.exit(1)
             }
 
-            const module = 
+            const module =
                 rawModule.managedUsers
                 ? {
                     ...rawModule
@@ -280,7 +293,7 @@ async function main(){
                             await teardown_pgmg_objects(args[0], {migration_user, service_user})
                         }
                     }
-                    ,async cluster(...args) {    
+                    ,async cluster(...args) {
                         await create_pgmg_objects(args[0], {migration_user, service_user})
                         await rawModule.cluster?.(...args)
                     }
@@ -351,10 +364,10 @@ async function main(){
                         ;
                     `
 
-                const autoMigrationUserEnabled = 
+                const autoMigrationUserEnabled =
                     module.managedUsers
 
-                const hostIsDifferent = 
+                const hostIsDifferent =
                     getHostName() !== found?.hostname
 
                 const [anyDevHookFound] = always
@@ -443,7 +456,7 @@ async function main(){
     const clusterURL =
         Object.assign(new URL(url), { pathname: '' })+''
 
-    const clusterSQL =
+    let clusterSQL =
         postgres(clusterURL, { ...config, onnotice: console.error })
 
     for ( let { name: restorePhase, skip, hooks: hookPhases } of order ) {
