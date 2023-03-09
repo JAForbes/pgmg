@@ -225,12 +225,6 @@ async function main(){
 
             app.sql = dry ? app.drySQL : app.realSQL
             app.sql.pgmg = u
-
-            if (!argv['keep-default-search-path']) {
-                await app.sql`
-                    set search_path = '${app.sql.unsafe(argv['search-path'] ?? '')}'
-                `
-            }
         }
     }
 
@@ -302,6 +296,11 @@ async function main(){
 
         for ( let migration of migrations ) {
             await app.resetConnection()
+            if (!argv['keep-default-search-path']) {
+                await app.sql`
+                    set search_path = '${app.sql.unsafe(argv['search-path'] ?? '')}'
+                `
+            }
             let rawModule = await import(P.resolve(process.cwd(), migration))
             if ( !rawModule.name ) {
                 console.error('Migration', migration, 'did not export a name.')
