@@ -114,12 +114,6 @@ The only way to specify a connection is via a pg connection URL.
                             Not to be used in production.  Will exit non zero
                             if --dev flag is not also passed.
 
---data-only                 Only runs the `data` hook.
-                            Does not update the `pgmg.migration` table.
-
---schema-only               Skips the `data` hook.  But if you insert or
-                            modify data in other hooks, they will still run.
-
 --restore <file>            Restores a database backup and then runs migrations
                             against it.  Does the following:
                             Drops the original db, creates a new db, runs
@@ -129,6 +123,14 @@ The only way to specify a connection is via a pg connection URL.
 --env-file <file>           Specify an env file to be loaded before running your
                             migration files.  Note this will overwrite ambient
                             environment variables with the same name.
+
+--search_path=''            Specify custom default search_path for all your migrations.
+                            Default='' if not prevented via --keep-default-search-path
+
+--keep-default-search-path  By default pgmg sets search_path='' to encourage you
+                            to fully qualify names and/or explicitly set search_path
+                            to the minimum required scope.  This flag will leave
+                            search_path at its more insecure default.
 
 --ssl
     | --ssl                 Enables ssl
@@ -223,21 +225,6 @@ db state so you can test your migration changes.
 > Note in `--dev` by default `pgmg` automatically tears down created objects
 > from the last migration run. You can disable this via
 > `export const managedUsers = false`
-
-#### export data
-
-You can insert or modify data in any of the above hooks, but it is recommended
-to do so in the `data` hook as it runs after your table has been modified.
-
-There's some cases where inserting data will create pending triggers, and when a
-table is pending triggers the table cannot be altered. So having a clean
-separation between altering tables and inserting data makes sense.
-
-You can skip insert data by passing `--schema-only`, and conversely you can skip
-all hooks except `data` by passing `--data-only`
-
-> 🤔 We are considering removing this in favour of
-> [argv passthrough](https://github.com/JAForbes/pgmg/issues/28)
 
 ## Automatic Teardown
 

@@ -62,12 +62,6 @@ The only way to specify a connection is via a pg connection URL.
                             Not to be used in production.  Will exit non zero
                             if --dev flag is not also passed.
 
---data-only                 Only runs the \`data\` hook.
-                            Does not update the \`pgmg.migration\` table.
-
---schema-only               Skips the \`data\` hook.  But if you insert or
-                            modify data in other hooks, they will still run.
-
 --restore <file>            Restores a database backup and then runs migrations
                             against it.  Does the following:
                             Drops the original db, creates a new db, runs
@@ -77,6 +71,9 @@ The only way to specify a connection is via a pg connection URL.
 --env-file <file>           Specify an env file to be loaded before running your
                             migration files.  Note this will overwrite ambient
                             environment variables with the same name.
+
+--search-path=''            Specify custom default search_path for all your migrations.
+                            Default='' if not prevented via --keep-default-search-path
 
 --keep-default-search-path  By default pgmg sets search_path='' to encourage you
                             to fully qualify names and/or explicitly set search_path
@@ -137,20 +134,17 @@ const order =
         ,{ name: 'clusterMigrate'
         , hooks: [
             [
-                { name: 'teardown', schemaOnly: true, skip: !argv.dev, ifExists: true }
-                ,{ name: 'cluster', skip: argv.dataOnly, rememberChange: true, ifNoMigrationUser: true }
+                { name: 'teardown', skip: !argv.dev, ifExists: true }
+                ,{ name: 'cluster', skip: false, rememberChange: true, ifNoMigrationUser: true }
             ]
         ]
         }
         ,{ name: 'databaseMigrate'
         , hooks: [
             [
-                { name: 'action', skip: argv.dataOnly, rememberChange: true }
-                , { name: 'always', skip: argv.dataOnly, rememberChange: true, always: true }
+                { name: 'action', skip: false, rememberChange: true }
+                , { name: 'always', skip: false, rememberChange: true, always: true }
 
-            ]
-            ,[
-                { name: 'data', transaction: true, dev: false, skip: argv.schemaOnly }
             ]
         ]
         }
@@ -234,7 +228,7 @@ async function main(){
 
             if (!argv['keep-default-search-path']) {
                 await app.sql`
-                    set search_path = ''
+                    set search_path = '${app.sql.unsafe(argv['search-path'] ?? '')}'
                 `
             }
         }
@@ -256,13 +250,6 @@ async function main(){
 
     const RealSQL = () =>
         postgres(...pg)
-
-    function Raw(sql){
-
-        return function raw(strings, ...values){
-            return sql.unsafe(String.raw(strings, ...values))
-        }
-    }
 
     let migrations =
         await Promise.all(
@@ -320,14 +307,12 @@ async function main(){
                 console.error('Migration', migration, 'did not export a name.')
                 process.exit(1)
             } else if (!(
-                rawModule.transaction
-                || rawModule.action
+                rawModule.action
                 || rawModule.always
                 || rawModule.cluster
-                || rawModule.data
                 || rawModule.teardown
             )) {
-                console.error('Migration', migration, 'did not export lifecycle function (transaction|action|always|cluster|data).')
+                console.error('Migration', migration, 'did not export lifecycle function (action|always|cluster).')
                 process.exit(1)
             }
 
@@ -365,7 +350,6 @@ async function main(){
             for (
                 let {
                     name: hook
-                    , transaction
                     , always
                     , skip
                     , rememberChange
@@ -379,16 +363,7 @@ async function main(){
                 }
 
                 let action;
-                if ( transaction && module[hook] ) {
-                    action = (SQL, ...args) => SQL.begin( sql => {
-                        sql.pgmg = u
-                        sql.raw = Raw(sql)
-                        sql.raw.pgmg = u
-                        return module[hook](sql, ...args)
-                    })
-                } else {
-                    action = module[hook]
-                }
+                action = module[hook]
                 const [anyMigrationFound] =
                     await app.realSQL`
                         select migration_id
@@ -467,7 +442,7 @@ async function main(){
                         if (module.managedUsers && !['cluster','teardown'].includes(hook)){
                             await app.sql.unsafe(`set role ${roles.migration}`)
                         }
-                        await action(app.sql, { dev: argv.dev, roles })
+                        await action(app.sql, { ...argv, roles })
                         await app.sql.unsafe(`reset role`)
                         if ( rememberChange ) {
                             await app.sql`
