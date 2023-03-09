@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 /* globals process, console, URL */
-import { argv, $, glob } from 'zx'
+import { argv, $, glob, chalk } from 'zx'
 import postgres from 'postgres'
 import * as M from 'module'
 import * as P from 'path'
+import dotenv from 'dotenv'
 import os from 'os'
 
 import * as u from './utils.js'
@@ -36,12 +37,26 @@ Any files passed as arguments after the connection string will be imported as JS
 
 The only way to specify a connection is via a pg connection URL.
 
+
+╭――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――╮
+│                                                                                          │
+│               Note you must specify --dev or --prod modes when running pgmg              │
+│                                                                                          │
+╰――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――╯
+
+
 --dev                       Runs any teardown hooks before running the
                             forward migration.  Annotates the migration
                             record as \`dev\` so it will be re-run next time
                             as long as --dev is passed.
 
                             Only runs teardown hooks after 1 successful migration.
+
+--prod                      Runs your migration without any teardown hooks
+                            and on subsequent runs will never run the same migration
+                            file again.
+                            Cluster hooks will still run 1 time per host to ensure
+                            roles and cluster level settings are configured at each site.
 
 --teardown                  Runs the teardown hook for migrations tagged as dev.
                             Not to be used in production.  Will exit non zero
@@ -59,6 +74,15 @@ The only way to specify a connection is via a pg connection URL.
                             cluster level migrations, restores the backup into
                             the new database, then runs the remaining migrations.
 
+--env-file <file>           Specify an env file to be loaded before running your
+                            migration files.  Note this will overwrite ambient
+                            environment variables with the same name.
+
+--keep-default-search-path  By default pgmg sets search_path='' to encourage you
+                            to fully qualify names and/or explicitly set search_path
+                            to the minimum required scope.  This flag will leave
+                            search_path at its more insecure default.
+
 --ssl
     | --ssl                 Enables ssl
     | --ssl=prefer          Prefers ssl
@@ -70,6 +94,29 @@ The only way to specify a connection is via a pg connection URL.
     For more detailed connection options, connect to postgres manually
     via -X
 `
+
+
+// we do not use argv.prod, just argv.dev to indicate dev internally
+// but we guard here to ensure dev=true means prod=false and vice versa
+if ( argv.dev && argv.prod ) {
+    console.error(chalk.red`Both --dev and --prod cannot be set at the same time`)
+    process.exit(1)
+}
+if (!(argv.dev || argv.prod)) {
+    console.error(chalk.red`Either --dev or --prod must be specified`)
+    process.exit(1)
+}
+
+
+if ( argv['env-file'] ) {
+    console.log('|'+argv['env-file']+'|')
+    const result = dotenv.config({ path: argv['env-file'], override: true })
+    if(result.error){
+        console.log(chalk.red(`Failed to load environment variables from ${argv['env-file']}`))
+        throw result.error
+    }
+    console.log(chalk.yellow(`Loaded environment variables from ${argv['env-file']}`))
+}
 
 const order =
     argv.dev && argv.teardown
@@ -99,7 +146,6 @@ const order =
         , hooks: [
             [
                 { name: 'action', skip: argv.dataOnly, rememberChange: true }
-                , { name: 'transaction', transaction: true, skip: argv.dataOnly, rememberChange: true }
                 , { name: 'always', skip: argv.dataOnly, rememberChange: true, always: true }
 
             ]
@@ -165,12 +211,10 @@ async function main(){
     let app = {
 
         async resetConnection(){
+            // Why:
+            // https://github.com/JAForbes/pgmg/issues/17
+
             if (clusterSQL) {
-                await clusterSQL`
-                    select pg_cancel_backend(pid)
-                    from pg_stat_activity
-                    where state = 'active' and pid <> pg_backend_pid();
-                `
                 await clusterSQL.end()
                 clusterSQL = postgres(clusterURL, { ...config, onnotice: console.error })
             }
@@ -187,8 +231,12 @@ async function main(){
 
             app.sql = dry ? app.drySQL : app.realSQL
             app.sql.pgmg = u
-            app.sql.raw = Raw(app.sql)
-            app.sql.Raw = Raw
+
+            if (!argv['keep-default-search-path']) {
+                await app.sql`
+                    set search_path = ''
+                `
+            }
         }
     }
 
@@ -284,7 +332,8 @@ async function main(){
             }
 
             const module =
-                rawModule.managedUsers
+                // if its not exported, its true
+                rawModule.managedUsers !== false
                 ? {
                     ...rawModule
                     ,async teardown (...args) {
