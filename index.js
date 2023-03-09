@@ -92,6 +92,10 @@ The only way to specify a connection is via a pg connection URL.
     via -X
 `
 
+if( process.argv.length == 2 || argv.help ){
+    console.log(help)
+    process.exit(argv.help ? 0 : 1)
+}
 
 // we do not use argv.prod, just argv.dev to indicate dev internally
 // but we guard here to ensure dev=true means prod=false and vice versa
@@ -160,10 +164,6 @@ function slugify(s){
 }
 
 async function main(){
-    if( process.argv.length == 2 || argv.help ){
-        console.log(help)
-        process.exit(argv.help ? 0 : 1)
-    }
 
     if( argv.version ) {
         console.log(pkg.version)
