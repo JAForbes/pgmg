@@ -388,7 +388,7 @@ async function main(){
                     `
 
                 const autoMigrationUserEnabled =
-                    module.managedUsers
+                    !(module.managedUsers === false)
 
                 const hostIsDifferent =
                     getHostName() !== found?.hostname

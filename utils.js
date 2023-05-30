@@ -1,26 +1,29 @@
-export function triggerChange(sql, { table, column, expression, security='invoker' }){
-    let TG_NAME = `${table}_${column}`
-    let FN_NAME = `${table}_${column}`
-    sql = String.raw
+export async function triggerChange(sql, { table, column, expression, security='invoker' }){
+    let TG_NAME = sql.unsafe(`${table}_${column}`)
+    let FN_NAME = sql.unsafe(`${table}_${column}`)
 
-    const out = sql`
+    await sql`
         create or replace function ${FN_NAME}() returns trigger as $$
         begin
-            ${expression};
+            ${sql.unsafe(expression)};
             return NEW;
         end;
-        $$ language plpgsql security ${security} set search_path = '';
+        $$ language plpgsql security ${sql.unsafe(security)} set search_path = '';
 
+    `
+
+    await sql`
         create trigger ${TG_NAME}_update
-        before update on ${table}
+        before update on ${sql.unsafe(table)}
         for each row
         execute function ${FN_NAME}();
 
+    `
+
+    await sql`
         create trigger ${TG_NAME}_insert
-        before insert on ${table}
+        before insert on ${sql.unsafe(table)}
         for each row
         execute function ${FN_NAME}();
     `
-
-    return out
 }
