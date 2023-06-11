@@ -132,9 +132,8 @@ const order =
     ]
     : [
         { name: 'dropCreate', hooks: [], skip: !argv.restore }
-        ,{ name: 'setupPGMG', hooks: [] }
-
         ,{ name: 'restore', hooks: [], skip: !argv.restore }
+        ,{ name: 'setupPGMG', hooks: [] }
         ,{ name: 'clusterMigrate'
         , hooks: [
             [
@@ -162,6 +161,10 @@ function getHostName(){
 function slugify(s){
     return s.split('\n').join('').trim().toLowerCase().replace(/\-|\s/g, '_')
 }
+
+// so we can more easily infer if a feature was available when a migration ran
+// update this number any time we add/remove some feature
+export const revision = 1
 
 async function main(){
 
@@ -310,6 +313,7 @@ async function main(){
                 || rawModule.always
                 || rawModule.cluster
                 || rawModule.teardown
+                || rawModule.transaction
             )) {
                 console.error('Migration', migration, 'did not export lifecycle function (action|always|cluster).')
                 process.exit(1)
@@ -328,7 +332,11 @@ async function main(){
                     }
                     ,async cluster(...args) {
                         await create_pgmg_objects(args[0], {migration_user, service_user})
-                        await rawModule.cluster?.(...args)
+
+                        if (rawModule.cluster) {
+                            console.log(rawModule.name+'::'+'cluster')
+                            await rawModule.cluster?.(...args)
+                        }
                     }
                 }
                 : rawModule
@@ -363,10 +371,22 @@ async function main(){
 
                 let action;
                 action = module[hook]
+
+                // handle legacy migration files
+                if ( !action && hook == 'action' ) {
+                    action == module.transaction
+                }
                 const [anyMigrationFound] =
                     await app.realSQL`
                         select migration_id
                         from pgmg.migration
+                        where name = ${module.name}
+                    `
+
+                const [{hooks_count}] =
+                    await app.realSQL`
+                        select count(*) as hooks_count
+                        from pgmg.migration_hook
                         where name = ${module.name}
                     `
 
@@ -375,15 +395,21 @@ async function main(){
                     // either match on hook for new migrations
                     // or for old migrations just match on name
                     : await app.realSQL`
-                        select M.migration_id, H.dev, H.hostname
+                        select
+                            M.migration_id, H.dev, H.hostname
                         from pgmg.migration M
                         inner join pgmg.migration_hook H using(name)
                         where (name, hook) = (${module.name}, ${hook})
+
                         union all
-                        select migration_id, false as dev, ${getHostName()} as hostname
+
+                        -- legacy migrations pre-dating migration_hook
+                        -- we just assume everything has run before
+                        select
+                            migration_id, false as dev, ${getHostName()} as hostname
                         from pgmg.migration
                         where name = ${module.name}
-                        and created_at < '2022-08-11'
+                        and ${hooks_count} = 0
                         ;
                     `
 
@@ -431,12 +457,12 @@ async function main(){
                             ? ifNoMigrationUser && noMigrationUserFound
                             : hostIsDifferent
                         )
-
                     )
 
                 if (shouldContinue){
                     try {
-                        console.log(hook+'::'+migration)
+                        (hook != 'cluster' || module.managedUsers === false)
+                            && console.log(hook+'::'+migration)
                         await app.sql.unsafe(`reset role`)
                         if (module.managedUsers && !['cluster','teardown'].includes(hook)){
                             await app.sql.unsafe(`set role ${roles.migration}`)
@@ -451,13 +477,14 @@ async function main(){
                             `
                             await app.sql`
                                 insert into pgmg.migration_hook(
-                                    hook, name, dev, hostname
+                                    hook, name, dev, hostname, revision
                                 )
                                 values (
                                     ${hook}
                                     , ${module.name}
                                     , ${!!argv.dev}
                                     , ${getHostName()}
+                                    , ${revision}
                                 )
                                 on conflict (hook, name) do nothing;
                             `
@@ -512,6 +539,33 @@ async function main(){
                     , hostname text not null
                     , primary key (name, hook)
                 );
+            `
+
+            await app.realSQL`
+                alter table pgmg.migration_hook
+                add column if not exists revision int;
+            `
+
+            // we used to support transaction hooks, we got rid of them
+            // as many statements cannot run inside a transaction and you can
+            // just use sql.begin if you need a transaction
+            //
+            // if a migration already ran with transaction we keep that record
+            // but we also say action ran, so that if they migrate to pgmg@v1
+            // and rename transaction -> action, it won't run again
+            // if we see transaction exported, we'll treat it as action too
+            // so they don't need to update old migration files
+            // that are seeded from scratch for e.g. test databases
+
+            await app.realSQL.unsafe`
+                insert into pgmg.migration_hook(
+                    hook, name, created_at, dev, hostname
+                )
+                select 'action', name, created_at, dev, hostname
+                from pgmg.migration_hook
+                where hook = 'transaction'
+                on conflict (name, hook)
+                do nothing
             `
         } else if (restorePhase == 'dropCreate' ) {
             await clusterSQL.unsafe(`drop database if exists ${dbName};`)

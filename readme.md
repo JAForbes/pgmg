@@ -21,15 +21,14 @@ export const description = `
     We automatically trim this so don't worry about indentation etc.
 `;
 
-// If this fails, any changes will be rolled back
-export async function transaction(sql) {
+export async function action(sql) {
   await sql`
-        create table example(
-            a int,
-            b int,
-            primary key (a,b)
-        )
-    `;
+    create table example(
+        a int,
+        b int,
+        primary key (a,b)
+    )
+  `;
 }
 ```
 
@@ -46,7 +45,7 @@ npx pgmg "$DATABASE_URL" "migrations/first-migrations.mjs"
   databases
 - 🐘 OOTB support for postgres.js, we pass in a preconfigured postgres.js
   instance just point us at migration files
-- 😎 A simple migration file format, just export a transaction function a name
+- 😎 A simple migration file format, just export an action function a name
   and a description
 - 👽 No config files - all metadata stored in the `pgmg` schema in the same
   database that you are migrating - take a peek at it 👀!
@@ -180,19 +179,23 @@ incorrect or incomplete, that is always worthwhile to document.
 
 #### `action`
 
-Perform your migration with a raw sql instance, no transaction.
+This hook is where you define the majority of your migration logic.
 
-This is necessary for some schema changes, e.g. role changes, or any usage of
+Note, we do not wrap action calls in a transaction so if you want to roll back changes on
+failure you may want to use [`sql.begin`](https://github.com/porsager/postgres/#transactions)
+
+Additionally, not all schema changes can occur within a transaction, e.g. role changes, or any usage of
 [`concurrently`](https://www.postgresql.org/docs/current/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY).
 
-An `action` export gets a raw sql instance. And performs no rollbacks if there
-is a failure. That means you need to manually handle your own error and rollback
-cases.
+An `action` export gets a raw postgres `sql` instance.
+
+`pgmg` creates a new connection for each migration file to isolate stateful connection contexts.  So be aware any
+transaction commits or rollbacks are on a per migration file basis, not the entire set of migration files that are running.
 
 #### `cluster`
 
 The `cluster` hook is designed for cluster level migrations, like defining
-users/roles and server settings. It runs before the `action` / `transaction` /
+users/roles and server settings. It runs before the `action` /
 `always` hooks.
 
 What makes `cluster` different to just another hook is that it will run if the
@@ -200,10 +203,13 @@ recorded run was on a different hostname. So if you download a prod snapshot,
 all the cluster snapshots will run again even if that prod snapshot has already
 had that migration run against it.
 
-> 💪 You can also dump roles via `pg_dump` and not bother with cluster hooks at
-> all. We may deprecate cluster hooks when we release our own `pg_dump` helper.
+> 💪 You can also dump roles via `pg_dumpall` and not bother with cluster hooks at
+> all. But it can be slow to dump/restore an entire cluster instead of a single database.
 
-#### export always
+> 🤓 We may deprecate cluster hooks when we release our own `pg_dump` helper that manages
+> restoring roles/extensions for you.
+
+#### `always`
 
 The `always` hooks runs every time `pgmg` is passed a migration file. This hook
 is useful for checks or migrations that should be re-evaluated every time. An
@@ -213,7 +219,7 @@ that query the info schema for tables matching a given rule or predicate.
 It can also be useful for local development as your migration will run every
 time.
 
-#### export teardown
+#### `teardown`
 
 The `teardown` hook is designed for local development only. `pgmg` is a forward
 only migration tool in production, but for local development it can be handy to
@@ -234,10 +240,10 @@ writing up and down scripts is hard and error prone and probably a bad idea.
 
 How does it work?
 
-We automatically create two roles for every migration file. A migration role and
-a service role. Before running your migration hooks we `set role` to the
-migration role. When you re-run a dev migration we inject a teardown hook that
-just runs `drop owned by <migration role>`.
+`pgmg` automatically creates two roles for every migration file. A `migration` role and
+a `service` role. Before running your migration hooks we `set role` to the
+migration role. When you re-run a `--dev` migration we inject a teardown hook that
+ runs `drop owned by <migration role>`.
 
 The only caveat is, if you use `set role` yourself in your migration you opt out
 of this feature.
@@ -249,7 +255,12 @@ second argument to your migration hooks
 
 ```js
 export function actions(sql, { roles }) {
-  await sql`grant ${roles.service} to my_pg_user`;
+  -- a role that services should connect as
+  -- use for defining RLS and grants
+  await sql`grant ${roles.service} to my_pg_user1`;
+
+  -- a super user role for creating/owning objects
+  await sql`grant ${roles.migration} to my_pg_user2`;
 }
 ```
 
@@ -262,8 +273,8 @@ role so that any created objects are tied to the migration role, not the
 connection role (usually the `postgres` super user).
 
 If you are running `pgmg` with the `--dev` flag then a teardown hook will
-automatically be applied which destroys any objects created by that migration
-user.
+automatically be applied which destroys any objects created by any dev migration
+users.
 
 > You can disable this feature via `export const managedUsers = false`.
 
@@ -287,7 +298,7 @@ This has several benefits:
 
 ```js
 export async functin cluster(sql){
-    await sql`create role guitar_service with password ${sql.unsafe(process.env.GUITAR_SERVICE_PASSWORD)}`
+  await sql`create role guitar_service with password ${sql.unsafe(process.env.GUITAR_SERVICE_PASSWORD)}`
 }
 
 export async function action(sql, { roles }) {
@@ -309,7 +320,7 @@ export async function action(sql, { roles }) {
 ```
 
 If you are running `pgmg` with the `--dev` then a teardown hook will
-automatically be applied with destroys any objects owned by the service user.
+automatically be applied which destroys any objects owned by the service user.
 
 You are encouraged to manually grant the service user to an actual postgres
 service user in your app. E.g. if you had a postgres user used by a photo
@@ -319,7 +330,7 @@ processing service you might run this line somewhere in your migration.
 await sql`grant ${sql.unsafe(roles.service)} to photo_processing`;
 ```
 
-> You can disable this feature via `export const managedUsers = true`.
+> You can disable this feature via `export const managedUsers = false`.
 
 > By default the service role has no permissions, and must be explicitly granted
 > in your migration hook.
@@ -351,8 +362,7 @@ $ ls -l migrations
 $ npx pgmg $DATABASE_URL migrations/*.js
 ```
 
-You could also have a simple text file that acts a manifest and expand the file
-as arguments like so:
+You could also have a simple text file that acts as a manifest and expand the file as arguments like so:
 
 Imagine we have a `migrations.txt` file:
 
