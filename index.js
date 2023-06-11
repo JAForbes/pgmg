@@ -334,7 +334,7 @@ async function main(){
                         await create_pgmg_objects(args[0], {migration_user, service_user})
 
                         if (rawModule.cluster) {
-                            console.log(rawModule.name+'::'+'cluster')
+                            console.log('cluster::' + rawModule.name)
                             await rawModule.cluster?.(...args)
                         }
                     }
@@ -374,7 +374,18 @@ async function main(){
 
                 // handle legacy migration files
                 if ( !action && hook == 'action' ) {
-                    action == module.transaction
+                    if (module.transaction) {
+                        action = (sql, options) => {
+                            return sql.begin(
+                                sql => {
+                                    sql.raw = () => {
+                                        throw new Error('pgmg no longer supports sql.raw, use sql.unsafe instead.  See: https://github.com/porsager/postgres/#unsafe-raw-string-queries' )
+                                    }
+                                    return module.transaction(sql, options)
+                                }
+                            )
+                        }
+                    }
                 }
                 const [anyMigrationFound] =
                     await app.realSQL`
