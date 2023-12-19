@@ -2,6 +2,13 @@
 
 pgmg = postgres + migrations
 
+> 🔥🔥 Note, there is a major update incoming that is currently on the `next` branch.  We will write a detailed changelog / migration before releasing it.
+> Do not use `next` in production, but feel free to take a look at what we are working on, and try it out on non critical projects.
+>
+> We also no longer recommend using `npx pgmg`, you should instead install a local semver or git tag to insulate yourself from future breaking changes.
+> Note if you have pgmg installed locally, `npx pgmg` will use your local copy, but if not it will fetch the latest tag, which is a little risky
+> for database migrations we think.
+
 ## Quick Start
 
 - `mkdir -p migrations`
@@ -32,7 +39,7 @@ export async function transaction(sql){
 ```bash
 # We don't rely on alphabetical order, you just pass in the files
 # you want to migrate.
-npx pgmg "$DATABASE_URL" "migrations/first-migrations.mjs"
+$(npm bin)/pgmg "$DATABASE_URL" "migrations/first-migrations.mjs"
 ```
 
 ## What
@@ -129,7 +136,7 @@ $ ls -l migrations
 03-magic-link.js
 
 # globbing will natively order alphabetically by default
-$ npx pgmg $DATABASE_URL migrations/*.js
+$ $(npm bin)/pgmg $DATABASE_URL migrations/*.js
 ```
 
 You could also have a simple text file that acts a manifest and expand the file as arguments like so:
@@ -145,7 +152,7 @@ magic-link.js
 We can expand that file as arguments like so:
 
 ```bash
-npx pgmg $DATABASE_URL $(cat migrations.txt)
+$(npm bin)/pgmg $DATABASE_URL $(cat migrations.txt)
 ```
 
 If you wanted, your manifest could be json, or yaml, or whatever you want, as long as you can extract the filenames and pass them as arguments.
