@@ -2,6 +2,7 @@
 
 /* globals process, console, URL */
 import { argv, $, glob, chalk } from 'zx'
+import fs from 'fs/promises'
 import postgres from 'postgres'
 import * as M from 'module'
 import * as P from 'path'
@@ -90,6 +91,14 @@ The only way to specify a connection is via a pg connection URL.
 
     For more detailed connection options, connect to postgres manually
     via -X
+
+--health-check-file <file>  Write to <file> when migration completes without error.
+                            If in --dev mode this file will be deleted and recreated
+                            for each migration.
+
+                            This is designed to be used with docker healthchecks so
+                            you can defer starting services or tests until after the
+                            migration is complete.
 `
 
 if( process.argv.length == 2 || argv.help ){
@@ -164,7 +173,7 @@ function slugify(s){
 
 // so we can more easily infer if a feature was available when a migration ran
 // update this number any time we add/remove some feature
-export const revision = 1
+export const revision = 2
 
 async function main(){
 
@@ -177,7 +186,8 @@ async function main(){
 
     let {
         ssl:theirSSL,
-        dry=false
+        dry=false,
+        'health-check-file': healthCheckFile
     } = argv
 
 
@@ -295,7 +305,7 @@ async function main(){
     }
 
     async function doHookPhase(hookPhase){
-
+        
 
         for ( let migration of migrations ) {
             await app.resetConnection()
@@ -468,6 +478,8 @@ async function main(){
                             ? ifNoMigrationUser && noMigrationUserFound
                             : hostIsDifferent
                         )
+
+                        || always && action
                     )
 
                 if (shouldContinue){
@@ -526,20 +538,21 @@ async function main(){
         }
 
         if (restorePhase == 'setupPGMG') {
+            if (healthCheckFile) {
+                await fs.rm(healthCheckFile, { encoding: 'utf-8', recursive: true })
+                    .catch(() => {})
+            }
             await app.resetConnection()
             await app.realSQL.unsafe`
                 create extension if not exists pgcrypto;
                 create schema if not exists pgmg;
                 create table if not exists pgmg.migration (
                     migration_id uuid primary key default public.gen_random_uuid()
-                    , name text not null
+                    , name text not null unique
                     , filename text not null
                     , description text null
                     , created_at timestamptz not null default now()
                 )
-                ;
-
-                alter table pgmg.migration add unique (name)
                 ;
 
                 create table if not exists pgmg.migration_hook (
@@ -609,6 +622,14 @@ async function main(){
     await clusterSQL.end()
 
     console.log('Migration complete')
+    if (healthCheckFile) {
+        await fs.writeFile(healthCheckFile, 'complete\n', { encoding: 'utf-8' })
+            .catch( err => {
+                console.error('Could not write to health check file')
+                console.error(err)
+            })
+    }
+
 }
 
 
