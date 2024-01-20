@@ -10,7 +10,6 @@ import dotenv from 'dotenv'
 import os from 'os'
 
 import * as u from './utils.js'
-import dryPostgres from './dryPostgres.js'
 
 // expose argv like zx
 const pkg = M.createRequire(import.meta.url) ('./package.json')
@@ -80,6 +79,10 @@ The only way to specify a connection is via a pg connection URL.
                             to fully qualify names and/or explicitly set search_path
                             to the minimum required scope.  This flag will leave
                             search_path at its more insecure default.
+
+--dry                       Doesn't run any migrations, instead just prints out the migrations
+                            that would run.  But does run initial setup scripts
+                            to ensure pgmg tables are coherent.
 
 --ssl
     | --ssl                 Enables ssl
@@ -227,23 +230,17 @@ async function main(){
             }
             if( app.sql ) {
                 await app.sql.end()
-                await app.realSQL?.end()
+                await app.sql?.end()
             }
 
-
-            app.realSQL = RealSQL()
-
-            app.drySQL =
-                dryPostgres(app.realSQL)
-
-            app.sql = dry ? app.drySQL : app.realSQL
+            app.sql = RealSQL()
             app.sql.pgmg = u
         }
     }
 
     function onnotice(...args){
-        if( app.realSQL.onnotice ) {
-            app.realSQL.onnotice(...args)
+        if( app.sql.onnotice ) {
+            app.sql.onnotice(...args)
         } else {
             if(args[0].severity == 'NOTICE') return;
             console.log(...args)
@@ -357,7 +354,7 @@ async function main(){
 
             const roles = { migration: migration_user, service: service_user }
 
-            const [migrationUserFound] = await app.realSQL`
+            const [migrationUserFound] = await app.sql`
                 select rolname
                 from pg_catalog.pg_roles
                 where rolname = ${roles.migration};
@@ -398,14 +395,14 @@ async function main(){
                     }
                 }
                 const [anyMigrationFound] =
-                    await app.realSQL`
+                    await app.sql`
                         select migration_id
                         from pgmg.migration
                         where name = ${module.name}
                     `
 
                 const [{hooks_count}] =
-                    await app.realSQL`
+                    await app.sql`
                         select count(*) as hooks_count
                         from pgmg.migration_hook
                         where name = ${module.name}
@@ -415,7 +412,7 @@ async function main(){
                     ? [{}]
                     // either match on hook for new migrations
                     // or for old migrations just match on name
-                    : await app.realSQL`
+                    : await app.sql`
                         select
                             M.migration_id, H.dev, H.hostname
                         from pgmg.migration M
@@ -444,7 +441,7 @@ async function main(){
                     ? [{}]
                     // either match on hook for new migrations
                     // or for old migrations just match on name
-                    : await app.realSQL`
+                    : await app.sql`
                         select M.migration_id, H.dev, H.hostname
                         from pgmg.migration M
                         inner join pgmg.migration_hook H using(name)
@@ -482,7 +479,11 @@ async function main(){
                         || always && action
                     )
 
-                if (shouldContinue){
+                runMigration: if (shouldContinue){
+                    if (dry) {
+                        console.log(hook+'::'+migration,'(dry)')
+                        break runMigration
+                    }
                     try {
                         (hook != 'cluster' || module.managedUsers === false)
                             && console.log(hook+'::'+migration)
@@ -543,7 +544,7 @@ async function main(){
                     .catch(() => {})
             }
             await app.resetConnection()
-            await app.realSQL.unsafe`
+            await app.sql.unsafe`
                 create extension if not exists pgcrypto;
                 create schema if not exists pgmg;
                 create table if not exists pgmg.migration (
@@ -565,7 +566,7 @@ async function main(){
                 );
             `
 
-            await app.realSQL`
+            await app.sql`
                 alter table pgmg.migration_hook
                 add column if not exists revision int;
             `
@@ -581,7 +582,7 @@ async function main(){
             // so they don't need to update old migration files
             // that are seeded from scratch for e.g. test databases
 
-            await app.realSQL.unsafe`
+            await app.sql.unsafe`
                 insert into pgmg.migration_hook(
                     hook, name, created_at, dev, hostname
                 )
@@ -618,20 +619,19 @@ async function main(){
         }
     }
 
-    await app.realSQL.end()
+    await app.sql.end()
     await clusterSQL.end()
 
     console.log('Migration complete')
     if (healthCheckFile) {
+        await fs.mkdir( P.dirname(healthCheckFile), { recursive: true } )
         await fs.writeFile(healthCheckFile, 'complete\n', { encoding: 'utf-8' })
             .catch( err => {
                 console.error('Could not write to health check file')
                 console.error(err)
             })
     }
-
 }
-
 
 main()
 .catch(
