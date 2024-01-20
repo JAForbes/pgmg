@@ -431,6 +431,7 @@ async function main(){
                         from pgmg.migration
                         where name = ${module.name}
                         and ${hooks_count} = 0
+                        and created_at <= '2022-08-11'
                         ;
                     `
 
