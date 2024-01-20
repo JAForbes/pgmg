@@ -104,6 +104,8 @@ The only way to specify a connection is via a pg connection URL.
                             migration is complete.
 `
 
+const migration_start_time = new Date()
+
 if( process.argv.length == 2 || argv.help ){
     console.log(help)
     process.exit(argv.help ? 0 : 1)
@@ -396,7 +398,7 @@ async function main(){
                 }
                 const [anyMigrationFound] =
                     await app.sql`
-                        select migration_id
+                        select migration_id, *
                         from pgmg.migration
                         where name = ${module.name}
                     `
@@ -406,6 +408,7 @@ async function main(){
                         select count(*) as hooks_count
                         from pgmg.migration_hook
                         where name = ${module.name}
+                        AND created_at < ${migration_start_time}
                     `
 
                 const [found] = always
@@ -478,6 +481,25 @@ async function main(){
 
                         || always && action
                     )
+
+                if (argv.debug) {
+                    console.log(module.name, hook, {
+                        shouldContinue
+                        , action
+                        , found
+                        , ifExists
+                        , anyMigrationFound
+                        , anyDevHookFound
+                        , hook
+                        , autoMigrationUserEnabled
+                        , ifNoMigrationUser
+                        , noMigrationUserFound
+                        , hostIsDifferent
+                        , always
+                        , hooks_count
+                        , 'getHostName()': getHostName()
+                    })
+                }
 
                 runMigration: if (shouldContinue){
                     if (dry) {
