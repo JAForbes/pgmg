@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable max-depth */
 
 /* globals process, console, URL */
 import { argv, $, glob, chalk } from 'zx'
@@ -83,6 +84,10 @@ The only way to specify a connection is via a pg connection URL.
 --dry                       Doesn't run any migrations, instead just prints out the migrations
                             that would run.  But does run initial setup scripts
                             to ensure pgmg tables are coherent.
+
+--dry-complete              Like --dry but marks any matched migrations as complete.  This
+                            can be helpful when upgrading pgmg versions where you want to
+                            skip old migration files going forward.
 
 --ssl
     | --ssl                 Enables ssl
@@ -191,6 +196,7 @@ async function main(){
 
     let {
         ssl:theirSSL,
+        'dry-complete': dryComplete=false,
         dry=false,
         'health-check-file': healthCheckFile
     } = argv
@@ -458,7 +464,8 @@ async function main(){
                     : null
 
                 const shouldContinue =
-                    action
+                    dryComplete
+                    || action
                     && (
 
                         // never ran before
@@ -508,14 +515,19 @@ async function main(){
                         break runMigration
                     }
                     try {
-                        (hook != 'cluster' || module.managedUsers === false)
-                            && console.log(hook+'::'+migration)
-                        await app.sql.unsafe(`reset role`)
-                        if (module.managedUsers && !['cluster','teardown'].includes(hook)){
-                            await app.sql.unsafe(`set role ${roles.migration}`)
+                        if (!dryComplete) {
+                            (hook != 'cluster' || module.managedUsers === false)
+                                && console.log(hook+'::'+migration)
+                            await app.sql.unsafe(`reset role`)
+                            if (module.managedUsers && !['cluster','teardown'].includes(hook)){
+                                await app.sql.unsafe(`set role ${roles.migration}`)
+                            }
+                            await action(app.sql, { ...argv, roles })
+                            await app.sql.unsafe(`reset role`)
+                        } else {
+                            console.log(hook+'::'+migration, '(dry complete)')
                         }
-                        await action(app.sql, { ...argv, roles })
-                        await app.sql.unsafe(`reset role`)
+
                         if ( rememberChange ) {
                             await app.sql`
                                 insert into pgmg.migration(name, filename, description)
