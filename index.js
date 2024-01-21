@@ -27,8 +27,8 @@ Version: ${pkg.version}
 --version   Logs the current pgmg version
 
 [CONNECTION]
-- Pass a postgres connection string (just like psql)
-- AND/OR Specify host/user etc as env flags (PGHOST, PGUSER, PGPORT)
+
+Pass a postgres connection string (just like psql)
 
 [FILES]
 

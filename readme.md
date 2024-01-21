@@ -73,7 +73,6 @@ migration tool will also be wiped and pgpg will reapply changes on next run.
 
 ```
 Usage: pgmg [PGMG OPTIONS] [CONNECTION] [OPTIONS] [FILES]
-Version: ${pkg.version}
 
 [PGMG OPTiONS]
 
@@ -82,8 +81,8 @@ Version: ${pkg.version}
 --version   Logs the current pgmg version
 
 [CONNECTION]
-- Pass a postgres connection string (just like psql)
-- AND/OR Specify host/user etc as env flags (PGHOST, PGUSER, PGPORT)
+
+Pass a postgres connection string (just like psql)
 
 [FILES]
 
@@ -128,13 +127,21 @@ The only way to specify a connection is via a pg connection URL.
                             migration files.  Note this will overwrite ambient
                             environment variables with the same name.
 
---search_path=''            Specify custom default search_path for all your migrations.
+--search-path=''            Specify custom default search_path for all your migrations.
                             Default='' if not prevented via --keep-default-search-path
 
 --keep-default-search-path  By default pgmg sets search_path='' to encourage you
                             to fully qualify names and/or explicitly set search_path
                             to the minimum required scope.  This flag will leave
                             search_path at its more insecure default.
+
+--dry                       Doesn't run any migrations, instead just prints out the migrations
+                            that would run.  But does run initial setup scripts
+                            to ensure pgmg tables are coherent.
+
+--dry-complete              Like --dry but marks any matched migrations as complete.  This
+                            can be helpful when upgrading pgmg versions where you want to
+                            skip old migration files going forward.
 
 --ssl
     | --ssl                 Enables ssl
@@ -146,6 +153,14 @@ The only way to specify a connection is via a pg connection URL.
 
     For more detailed connection options, connect to postgres manually
     via -X
+
+--health-check-file <file>  Write to <file> when migration completes without error.
+                            If in --dev mode this file will be deleted and recreated
+                            for each migration.
+
+                            This is designed to be used with docker healthchecks so
+                            you can defer starting services or tests until after the
+                            migration is complete.
 ```
 
 ### Migration File
@@ -325,7 +340,7 @@ export async function action(sql, { roles }) {
 ```
 
 If you are running `pgmg` with the `--dev` then a teardown hook will
-automatically be applied which destroys any objects owned by the service user.
+automatically be applied which destroys any objects owned by the migration and service user.
 
 You are encouraged to manually grant the service user to an actual postgres
 service user in your app. E.g. if you had a postgres user used by a photo
