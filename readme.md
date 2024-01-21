@@ -6,6 +6,11 @@
 > breaking changes. We use it heavily at https://harth.io/ but we are also
 > constantly iterating on features and ideas. Probably best to wait for a 1.0 or
 > pin to a specific gitref instead of using `npx pgmg`.
+>
+> If you want to jump over early, run `pgmg` using `--dry-complete` to mark old
+> migrations as complete using the new pgmg schema format.  Or alternatively
+> just move your old migration files to a different directory so they aren't
+> run against the new pgmg version.
 
 ## Quick Start
 
