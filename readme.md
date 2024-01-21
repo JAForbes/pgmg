@@ -400,3 +400,39 @@ npx pgmg $DATABASE_URL $(cat migrations.txt)
 
 If you wanted, your manifest could be json, or yaml, or whatever you want, as
 long as you can extract the filenames and pass them as arguments.
+
+
+## Upgrading from prior pgmg versions
+
+From time to time the internal representation of migrations under the `pgmg` schema changes.
+If you run a new pgmg major version against old migration files the CLI may get confused and
+re-run files that do not need to run.
+
+The CLI does attempt to detect and handle older migration records, but it is safer to never
+expose old migration files to new major versions of `pgmg`.
+
+You can avoid this by either deleting/moving old migration files, or marking those migrations
+as complete using `--dry-complete`
+
+```bash
+# Mark all migrations/*.js as having run in production
+# without actually running them
+npx pgmg "$DB_URL" migrations/*.js --dry-complete --prod
+```
+
+## Running migrations in production
+
+`pgmg` has two modes `--dev` and `--prod`.  In `--dev` mode pgmg will teardown database objects
+from migrations that were run locally and recreate them each time.  This can be combined with
+tools like watc, nodemon or node.js' new built in `--watch` feature to create a nice fast
+feedback loop when working on migrations.
+
+In `--prod` mode, migrations run one time only.  And any migrations marked as completed in `prod`
+will never re-run or teardown in `--dev` mode.
+
+If you are using `cluster` hooks, its important to maintain a consistent `HOSTNAME` when running
+migrations in production mode.  This will prevent roles or other cluster level objects from
+needlessly being created twice.
+
+If you are running migrations in CI prefix your `pgmg` command with `HOSTNAME=ci` so that the 
+randomized hostname doesn't confuse pgmg into running a cluster hook twice.
