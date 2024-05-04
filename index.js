@@ -26,6 +26,8 @@ Version: ${pkg.version}
 
 --version   Logs the current pgmg version
 
+--debug     Enables verbose debug logging
+
 [CONNECTION]
 
 Pass a postgres connection string (just like psql)
@@ -111,7 +113,12 @@ The only way to specify a connection is via a pg connection URL.
 
 const migration_start_time = new Date()
 
+const debugLog = argv.debug ? console.log.bind(console, 'DEBUG:') : () => {}
+
+debugLog('debug logging enabled')
+
 if( process.argv.length == 2 || argv.help ){
+    debugLog('not enough args or help invoked')
     console.log(help)
     process.exit(argv.help ? 0 : 1)
 }
@@ -186,6 +193,7 @@ function slugify(s){
 export const revision = 2
 
 async function main(){
+    debugLog('starting main function')
 
     if( argv.version ) {
         console.log(pkg.version)
@@ -229,16 +237,20 @@ async function main(){
     let app = {
 
         async resetConnection(){
+            debugLog('resetting connection')
             // Why:
             // https://github.com/JAForbes/pgmg/issues/17
 
             if (clusterSQL) {
+                debugLog('ending cluster sql connection')
                 await clusterSQL.end()
+                debugLog('ended cluster sql connection')
                 clusterSQL = postgres(clusterURL, { ...config, onnotice: console.error })
             }
             if( app.sql ) {
+                debugLog('ending app sql')
                 await app.sql.end()
-                await app.sql?.end()
+                debugLog('ended app sql')
             }
 
             app.sql = RealSQL()
@@ -250,7 +262,7 @@ async function main(){
         if( app.sql.onnotice ) {
             app.sql.onnotice(...args)
         } else {
-            if(args[0].severity == 'NOTICE') return;
+            if(args[0].severity == 'NOTICE' && !argv.debug) return;
             console.log(...args)
         }
     }
@@ -260,33 +272,45 @@ async function main(){
         , { ssl, onnotice, max: 1, prepare: false }
     ]
 
-    const RealSQL = () =>
-        postgres(...pg)
+    const RealSQL = () => {
+        debugLog('starting postgres instance with', ...pg)
+        return postgres(...pg)
+    }
 
+    debugLog('searching for migration files')
     let migrations =
         await Promise.all(
             argv._.filter( x => x.endsWith('.js') || x.endsWith('.mjs') )
                 .map( x => glob(x) )
         )
         .then( x => x.flat() )
+    debugLog('migration files retrieved')
 
+    async function teardown_pgmg_objects(sql, {migration_user, service_user}) {
+        debugLog('tearing down pgmg objects', { migration_user, service_user })
 
-    async function teardown_pgmg_objects(sql, {migration_user, service_user}){
         for (let target of [migration_user, service_user]) {
 
+            debugLog('searching for user to teardown', target)
             const [found] = await sql`
                 select rolname
                 from pg_catalog.pg_roles
                 where rolname = ${target};
             `
             if ( found ) {
+                debugLog('found user, tearing down', target)
                 await sql.unsafe(`drop owned by ${target} cascade`)
                 await sql.unsafe(`drop role ${target}`)
+            } else {
+                debugLog('user not found, continuing', target)
             }
         }
     }
     async function create_pgmg_objects(sql, {migration_user, service_user}){
+        debugLog('creating pgmg objects', { migration_user, service_user })
         for (let target of [migration_user, service_user]) {
+
+            debugLog('searching for user to create', target)
 
             const [found] = await sql`
                 select rolname
@@ -295,6 +319,7 @@ async function main(){
             `
 
             if (found) {
+                debugLog('found user, if !dev will throw', target)
                 if (!argv.dev) {
                     throw new Error('pgmg managed role already exists: ' + target)
                 }
@@ -302,24 +327,35 @@ async function main(){
             }
 
             if ( target === migration_user ) {
+                debugLog('creating migration user', target)
                 await sql.unsafe(`create role ${target} with superuser nologin`)
+                debugLog('created migration user', target)
             } else if (target === service_user ) {
+                debugLog('creating service user', target)
                 await sql.unsafe(`create role ${target} with noinherit nologin nocreatedb nocreaterole nosuperuser noreplication nobypassrls`)
+                debugLog('created service user', target)
             }
         }
     }
 
     async function doHookPhase(hookPhase){
-        
-
+        debugLog('doHookPhase', hookPhase)
         for ( let migration of migrations ) {
+            debugLog('doHookPhase', hookPhase, 'resetting connection')
             await app.resetConnection()
+            debugLog('doHookPhase', hookPhase, 'resetted connection')
+
             if (!argv['keep-default-search-path']) {
+                debugLog('using specific search path', hookPhase, argv['search-patch'])
                 await app.sql`
-                    set search_path = '${app.sql.unsafe(argv['search-path'] ?? '')}'
+                    set search_path = '${app.sql.unsafe(argv['search-path'] ?? "")}'
                 `
+                debugLog('updated search path', argv['search-patch'])
             }
+            debugLog('importing module', migration)
             let rawModule = await import(P.resolve(process.cwd(), migration))
+            debugLog('imported module', migration)
+
             if ( !rawModule.name ) {
                 console.error('Migration', migration, 'did not export a name.')
                 process.exit(1)
@@ -362,13 +398,16 @@ async function main(){
 
             const roles = { migration: migration_user, service: service_user }
 
+            debugLog('searching for migration user', migration)
             const [migrationUserFound] = await app.sql`
                 select rolname
                 from pg_catalog.pg_roles
                 where rolname = ${roles.migration};
             `
+            debugLog('migration user search result', migrationUserFound)
             const noMigrationUserFound = !migrationUserFound
 
+            debugLog('entering hook phase loop')
             for (
                 let {
                     name: hook
@@ -380,7 +419,9 @@ async function main(){
                 } of hookPhase
             ) {
 
+                debugLog('entered hook phase loop', { hook, always, skip, rememberChange, ifExists, ifNoMigrationUser })
                 if(skip) {
+                    debugLog('skipping', { hook, always, skip, rememberChange, ifExists, ifNoMigrationUser })
                     continue;
                 }
 
@@ -402,13 +443,17 @@ async function main(){
                         }
                     }
                 }
+
+                debugLog('searching for any migration', module.name, { hook, always, skip, rememberChange, ifExists, ifNoMigrationUser })
                 const [anyMigrationFound] =
                     await app.sql`
                         select migration_id, *
                         from pgmg.migration
                         where name = ${module.name}
                     `
+                debugLog('any migration search result', module.name, anyMigrationFound, { hook, always, skip, rememberChange, ifExists, ifNoMigrationUser })
 
+                debugLog('search for migration hooks', module.name, anyMigrationFound, { hook, always, skip, rememberChange, ifExists, ifNoMigrationUser })
                 const [{hooks_count}] =
                     await app.sql`
                         select count(*) as hooks_count
@@ -416,7 +461,9 @@ async function main(){
                         where name = ${module.name}
                         AND created_at < ${migration_start_time}
                     `
+                debugLog('search for migration hooks', module.name, hooks_count, { hook, always, skip, rememberChange, ifExists, ifNoMigrationUser })
 
+                debugLog('searching for specific migration', module.name, { hook, always, skip, rememberChange, ifExists, ifNoMigrationUser, hooks_count })
                 const [found] = always
                     ? [{}]
                     // either match on hook for new migrations
@@ -440,6 +487,7 @@ async function main(){
                         and created_at <= '2022-08-11'
                         ;
                     `
+                debugLog('search for specific migration', module.name, { found, hook, always, skip, rememberChange, ifExists, ifNoMigrationUser, hooks_count })
 
                 const autoMigrationUserEnabled =
                     !(module.managedUsers === false)
@@ -447,6 +495,7 @@ async function main(){
                 const hostIsDifferent =
                     getHostName() !== found?.hostname
 
+                debugLog('search for dev hook', module.name, { found, hook, always, skip, rememberChange, ifExists, ifNoMigrationUser, hooks_count })
                 const [anyDevHookFound] = always
                     ? [{}]
                     // either match on hook for new migrations
@@ -458,6 +507,7 @@ async function main(){
                         where (name, dev) = (${module.name}, true)
                         ;
                     `
+                debugLog('search for dev hook', module.name, { anyDevHookFound, found, hook, always, skip, rememberChange, ifExists, ifNoMigrationUser, hooks_count })
 
                 let description = module.description
                     ? module.description.split('\n').map( x => x.trim() ).filter(Boolean).join('\n')
@@ -490,24 +540,22 @@ async function main(){
                         || always && action
                     )
 
-                if (argv.debug) {
-                    console.log(module.name, hook, {
-                        shouldContinue
-                        , action
-                        , found
-                        , ifExists
-                        , anyMigrationFound
-                        , anyDevHookFound
-                        , hook
-                        , autoMigrationUserEnabled
-                        , ifNoMigrationUser
-                        , noMigrationUserFound
-                        , hostIsDifferent
-                        , always
-                        , hooks_count
-                        , 'getHostName()': getHostName()
-                    })
-                }
+                debugLog(module.name, hook, {
+                    shouldContinue
+                    , action
+                    , found
+                    , ifExists
+                    , anyMigrationFound
+                    , anyDevHookFound
+                    , hook
+                    , autoMigrationUserEnabled
+                    , ifNoMigrationUser
+                    , noMigrationUserFound
+                    , hostIsDifferent
+                    , always
+                    , hooks_count
+                    , 'getHostName()': getHostName()
+                })
 
                 runMigration: if (shouldContinue){
                     if (dry) {
@@ -518,22 +566,33 @@ async function main(){
                         if (!dryComplete) {
                             (hook != 'cluster' || module.managedUsers === false)
                                 && console.log(hook+'::'+migration)
+                            debugLog('resetting role')
                             await app.sql.unsafe(`reset role`)
+                            debugLog('role reset')
                             if (module.managedUsers !== false && !['cluster','teardown'].includes(hook)){
+                                debugLog('setting role', roles.migration)
                                 await app.sql.unsafe(`set role ${roles.migration}`)
+                                debugLog('set role', roles.migration)
                             }
+                            debugLog('running action', module.name)
                             await action(app.sql, { ...argv, roles })
+                            debugLog('action complete', module.name)
+                            debugLog('resetting role', module.name)
                             await app.sql.unsafe(`reset role`)
+                            debugLog('role reset', module.name)
                         } else {
                             console.log(hook+'::'+migration, '(dry complete)')
                         }
 
                         if ( rememberChange ) {
+                            debugLog('recording change in main table', module.name)
                             await app.sql`
                                 insert into pgmg.migration(name, filename, description)
                                 values (${module.name}, ${migration}, ${description})
                                 on conflict (name) do nothing;
                             `
+                            debugLog('recorded change in main table', module.name)
+                            debugLog('recorded hook in hooks table', module.name, hook)
                             await app.sql`
                                 insert into pgmg.migration_hook(
                                     hook, name, dev, hostname, revision
@@ -547,6 +606,7 @@ async function main(){
                                 )
                                 on conflict (hook, name) do nothing;
                             `
+                            debugLog('recorded hook in hooks table', module.name, hook)
                         }
 
                     } catch (e) {
@@ -565,20 +625,32 @@ async function main(){
     const clusterURL =
         Object.assign(new URL(url), { pathname: '' })+''
 
+    debugLog('starting cluster sql with', { ...config, onnotice: console.error })
     let clusterSQL =
         postgres(clusterURL, { ...config, onnotice: console.error })
+    debugLog('started cluster sql with', { ...config, onnotice: console.error })
 
+    debugLog('entering main sequence loop')
     for ( let { name: restorePhase, skip, hooks: hookPhases } of order ) {
+        debugLog('entered main sequence loop', { restorePhase, skip, hookPhases })
         if (skip) {
+            debugLog('skipping', { restorePhase, skip, hookPhases })
             continue;
         }
 
+
         if (restorePhase == 'setupPGMG') {
             if (healthCheckFile) {
+                debugLog('removing health check file', { healthCheckFile, restorePhase, skip, hookPhases })
                 await fs.rm(healthCheckFile, { encoding: 'utf-8', recursive: true })
                     .catch(() => {})
+                debugLog('removed health check file', { healthCheckFile, restorePhase, skip, hookPhases })
             }
+            debugLog('sequence loop > resetting connection', { healthCheckFile, restorePhase, skip, hookPhases })
             await app.resetConnection()
+            debugLog('sequence loop > resetted connection', { healthCheckFile, restorePhase, skip, hookPhases })
+
+            debugLog('creating extensions and main migration table if not exists', { healthCheckFile, restorePhase, skip, hookPhases })
             await app.sql.unsafe`
                 create extension if not exists pgcrypto;
                 create schema if not exists pgmg;
@@ -600,11 +672,14 @@ async function main(){
                     , primary key (name, hook)
                 );
             `
+            debugLog('created main tables', { healthCheckFile, restorePhase, skip, hookPhases })
 
+            debugLog('add revision to migration hook table', { healthCheckFile, restorePhase, skip, hookPhases })
             await app.sql`
                 alter table pgmg.migration_hook
                 add column if not exists revision int;
             `
+            debugLog('added revision to migration hook table', { healthCheckFile, restorePhase, skip, hookPhases })
 
             // we used to support transaction hooks, we got rid of them
             // as many statements cannot run inside a transaction and you can
@@ -617,6 +692,7 @@ async function main(){
             // so they don't need to update old migration files
             // that are seeded from scratch for e.g. test databases
 
+            debugLog('inserting any previous legacy actions migration hook table', { healthCheckFile, restorePhase, skip, hookPhases })
             await app.sql.unsafe`
                 insert into pgmg.migration_hook(
                     hook, name, created_at, dev, hostname
@@ -627,16 +703,29 @@ async function main(){
                 on conflict (name, hook)
                 do nothing
             `
+            debugLog('inserted any previous legacy actions migration hook table', { healthCheckFile, restorePhase, skip, hookPhases })
         } else if (restorePhase == 'dropCreate' ) {
+            debugLog('dropping and recreating db', { healthCheckFile, restorePhase, skip, hookPhases })
+            debugLog('dropping db', { healthCheckFile, restorePhase, skip, hookPhases })
             await clusterSQL.unsafe(`drop database if exists ${dbName};`)
+            debugLog('dropped db', { healthCheckFile, restorePhase, skip, hookPhases })
+            debugLog('creating db', { healthCheckFile, restorePhase, skip, hookPhases })
             await clusterSQL.unsafe(`create database ${dbName};`)
+            debugLog('created db', { healthCheckFile, restorePhase, skip, hookPhases })
+            debugLog('drop create reset app connection', { healthCheckFile, restorePhase, skip, hookPhases })
             await app.resetConnection()
+            debugLog('drop create resetted app connection', { healthCheckFile, restorePhase, skip, hookPhases })
         } else if ( restorePhase == 'restore' ) {
+            debugLog('pg restore started', { dbUrl }, `restore: ${argv.restore}`)
             await $`pg_restore --verbose --clean -d ${dbUrl} ${argv.restore}`.nothrow()
+            debugLog('pg restored', { dbUrl }, `restore: ${argv.restore}`)
         } else if (restorePhase == 'removeDevMigrationRecords') {
+            debugLog('clearing dev hooks')
             await app.sql`
                 delete from pgmg.migration_hook where dev;
             `
+            debugLog('cleared dev hooks')
+            debugLog('clearing main migrations for legacy migrations if dev')
             await app.sql`
                 delete from pgmg.migration M
                 where true
@@ -647,24 +736,33 @@ async function main(){
                     where M.name = H.name
                 ) = 0;
             `
+            debugLog('cleared main migrations for legacy migrations if dev')
         }
 
+        debugLog('entering hook phase loop')
         for( let hookPhase of hookPhases ) {
+            debugLog('entered hook phase loop', hookPhase)
             await doHookPhase(hookPhase)
         }
     }
 
+    debugLog('exiting app sql connection')
     await app.sql.end()
+    debugLog('exited app sql connection')
+    debugLog('exiting cluster sql connection')
     await clusterSQL.end()
+    debugLog('exited cluster sql connection')
 
     console.log('Migration complete')
     if (healthCheckFile) {
+        debugLog('health check creation')
         await fs.mkdir( P.dirname(healthCheckFile), { recursive: true } )
         await fs.writeFile(healthCheckFile, 'complete\n', { encoding: 'utf-8' })
             .catch( err => {
                 console.error('Could not write to health check file')
                 console.error(err)
             })
+            debugLog('health check created')
     }
 }
 
