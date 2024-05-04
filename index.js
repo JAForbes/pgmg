@@ -254,6 +254,13 @@ async function main(){
             }
 
             app.sql = RealSQL()
+            if (!argv['keep-default-search-path']) {
+                debugLog('using specific search path', argv['search-patch'])
+                await app.sql`
+                    set search_path = '${app.sql.unsafe(argv['search-path'] ?? "")}'
+                `
+                debugLog('updated search path', argv['search-patch'])
+            }
             app.sql.pgmg = u
         }
     }
@@ -341,17 +348,6 @@ async function main(){
     async function doHookPhase(hookPhase){
         debugLog('doHookPhase', hookPhase)
         for ( let migration of migrations ) {
-            debugLog('doHookPhase', hookPhase, 'resetting connection')
-            await app.resetConnection()
-            debugLog('doHookPhase', hookPhase, 'resetted connection')
-
-            if (!argv['keep-default-search-path']) {
-                debugLog('using specific search path', hookPhase, argv['search-patch'])
-                await app.sql`
-                    set search_path = '${app.sql.unsafe(argv['search-path'] ?? "")}'
-                `
-                debugLog('updated search path', argv['search-patch'])
-            }
             debugLog('importing module', migration)
             let rawModule = await import(P.resolve(process.cwd(), migration))
             debugLog('imported module', migration)
@@ -558,6 +554,10 @@ async function main(){
                 })
 
                 runMigration: if (shouldContinue){
+                    debugLog('resetting role')
+                    await app.sql.unsafe(`reset role`)
+                    debugLog('role reset')
+    
                     if (dry) {
                         console.log(hook+'::'+migration,'(dry)')
                         break runMigration
