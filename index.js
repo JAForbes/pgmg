@@ -519,10 +519,16 @@ async function main(){
 
                         // ran before in dev mode and we are in dev mode again
                         // skip migrations with no teardown
-                        || found && found.dev && argv.dev && module.teardown
+                        || found && found.dev && argv.dev && module.teardown && module.dev !== false
 
                         // run if any migration exists, for teardown
-                        || ifExists && anyMigrationFound && anyDevHookFound && module.dev !== false
+                        || (
+                            ifExists 
+                            && found.dev 
+                            && anyMigrationFound 
+                            && anyDevHookFound 
+                            && module.dev !== false
+                        )
 
                         // or it is a cluster hook that has run before but
                         // we have no trace of a cluster user so it hasn't
