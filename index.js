@@ -522,7 +522,7 @@ async function main(){
                         || found && found.dev && argv.dev && module.teardown
 
                         // run if any migration exists, for teardown
-                        || ifExists && anyMigrationFound && anyDevHookFound
+                        || ifExists && anyMigrationFound && anyDevHookFound && module.dev !== false
 
                         // or it is a cluster hook that has run before but
                         // we have no trace of a cluster user so it hasn't
