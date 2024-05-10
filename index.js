@@ -523,8 +523,7 @@ async function main(){
 
                         // run if any migration exists, for teardown
                         || (
-                            ifExists 
-                            && found.dev 
+                            ifExists
                             && anyMigrationFound 
                             && anyDevHookFound 
                             && module.dev !== false
