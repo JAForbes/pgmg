@@ -91,17 +91,6 @@ The only way to specify a connection is via a pg connection URL.
                             can be helpful when upgrading pgmg versions where you want to
                             skip old migration files going forward.
 
---ssl
-    | --ssl                 Enables ssl
-    | --ssl=prefer          Prefers ssl
-    | --ssl=require         Requires ssl
-    | --ssl=reject          Reject unauthorized connections
-    | --ssl=no-reject       Do not reject unauthorized connections
-    | --ssl=heroku          --no-ssl-reject if the host ends with a .com
-
-    For more detailed connection options, connect to postgres manually
-    via -X
-
 --health-check-file <file>  Write to <file> when migration completes without error.
                             If in --dev mode this file will be deleted and recreated
                             for each migration.
@@ -201,42 +190,17 @@ async function main(){
     }
 
     let [connectionString] = argv._
-
+    
     let {
-        ssl:theirSSL,
         'dry-complete': dryComplete=false,
         dry=false,
         'health-check-file': healthCheckFile
     } = argv
 
 
-    if ( theirSSL == 'heroku' ) {
-        let hosts = []
-        if (process.env.PGHOST) {
-            hosts = process.env.PGHOST.split(',')
-        } else if (connectionString ) {
-            hosts =
-                connectionString.split('@')[1].split('/')[0].split(',').map( x => x.split(':')[0])
-        }
-
-        theirSSL =
-            hosts.every( x => x.endsWith('.com') )
-            ? 'no-reject'
-            : false
-    }
-
-    const ssl =
-        theirSSL == 'no-reject'
-            ? { rejectUnauthorized: false }
-        : theirSSL == 'reject'
-            ? { rejectUnauthorized: true }
-        // inspired by: https://github.com/porsager/postgres/blob/master/lib/index.js#L577
-        : theirSSL !== 'disabled' && theirSSL !== false && theirSSL
-
-
     let app = {
 
-        async resetConnection(){
+        async resetConnection(config={}){
             debugLog('resetting connection')
             // Why:
             // https://github.com/JAForbes/pgmg/issues/17
@@ -253,7 +217,7 @@ async function main(){
                 debugLog('ended app sql')
             }
 
-            app.sql = RealSQL()
+            app.sql = RealSQL(config)
             if (!argv['keep-default-search-path']) {
                 debugLog('using specific search path', argv['search-patch'])
                 await app.sql`
@@ -276,12 +240,12 @@ async function main(){
 
     const pg = [
         connectionString
-        , { ssl, onnotice, max: 1, prepare: false }
+        , { onnotice, max: 1, prepare: false }
     ]
 
-    const RealSQL = () => {
-        debugLog('starting postgres instance with', ...pg)
-        return postgres(...pg)
+    const RealSQL = (config={}) => {
+        debugLog('starting postgres instance with', {...pg[1], ...config})
+        return postgres(pg[0], {...pg[1], ...config})
     }
 
     debugLog('searching for migration files')
@@ -559,9 +523,15 @@ async function main(){
                 })
 
                 runMigration: if (shouldContinue){
-                    debugLog('resetting role')
-                    await app.sql.unsafe(`reset role`)
-                    debugLog('role reset')
+                    if (module.connection) {
+                        debugLog('migration has custom connection options, resetting connection')
+                        await app.resetConnection(module.connection)
+                        debugLog('connection reset')
+                    } else {
+                        debugLog('resetting role')
+                        await app.sql.unsafe(`reset role`)
+                        debugLog('role reset')
+                    }
     
                     if (dry) {
                         console.log(hook+'::'+migration,'(dry)')
