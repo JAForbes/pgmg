@@ -2,7 +2,7 @@
 /* eslint-disable max-depth */
 
 /* globals process, console, URL */
-import { argv, $, glob, chalk } from 'zx'
+import { argv, glob, chalk } from 'zx'
 import fs from 'fs/promises'
 import postgres from 'postgres'
 import * as M from 'module'
@@ -65,12 +65,6 @@ The only way to specify a connection is via a pg connection URL.
                             Not to be used in production.  Will exit non zero
                             if --dev flag is not also passed.
 
---restore <file>            Restores a database backup and then runs migrations
-                            against it.  Does the following:
-                            Drops the original db, creates a new db, runs
-                            cluster level migrations, restores the backup into
-                            the new database, then runs the remaining migrations.
-
 --env-file <file>           Specify an env file to be loaded before running your
                             migration files.  Note this will overwrite ambient
                             environment variables with the same name.
@@ -86,10 +80,6 @@ The only way to specify a connection is via a pg connection URL.
 --dry                       Doesn't run any migrations, instead just prints out the migrations
                             that would run.  But does run initial setup scripts
                             to ensure pgmg tables are coherent.
-
---dry-complete              Like --dry but marks any matched migrations as complete.  This
-                            can be helpful when upgrading pgmg versions where you want to
-                            skip old migration files going forward.
 
 --health-check-file <file>  Write to <file> when migration completes without error.
                             If in --dev mode this file will be deleted and recreated
@@ -146,9 +136,7 @@ const order =
         ,{ name: 'removeDevMigrationRecords', hooks: [[]] }
     ]
     : [
-        { name: 'dropCreate', hooks: [], skip: !argv.restore }
-        ,{ name: 'restore', hooks: [], skip: !argv.restore }
-        ,{ name: 'setupPGMG', hooks: [] }
+        { name: 'setupPGMG', hooks: [] }
         ,{ name: 'clusterMigrate'
         , hooks: [
             [
@@ -192,7 +180,6 @@ async function main(){
     let [connectionString] = argv._
     
     let {
-        'dry-complete': dryComplete=false,
         dry=false,
         'health-check-file': healthCheckFile
     } = argv
@@ -474,8 +461,7 @@ async function main(){
                     : null
 
                 const shouldContinue =
-                    dryComplete
-                    || action
+                    action
                     && (
 
                         // never ran before
@@ -538,26 +524,22 @@ async function main(){
                         break runMigration
                     }
                     try {
-                        if (!dryComplete) {
-                            (hook != 'cluster' || module.managedUsers === false)
-                                && console.log(hook+'::'+migration)
-                            debugLog('resetting role')
-                            await app.sql.unsafe(`reset role`)
-                            debugLog('role reset')
-                            if (module.managedUsers !== false && !['cluster','teardown'].includes(hook)){
-                                debugLog('setting role', roles.migration)
-                                await app.sql.unsafe(`set role ${roles.migration}`)
-                                debugLog('set role', roles.migration)
-                            }
-                            debugLog('running action', module.name)
-                            await action(app.sql, { ...argv, roles })
-                            debugLog('action complete', module.name)
-                            debugLog('resetting role', module.name)
-                            await app.sql.unsafe(`reset role`)
-                            debugLog('role reset', module.name)
-                        } else {
-                            console.log(hook+'::'+migration, '(dry complete)')
+                        (hook != 'cluster' || module.managedUsers === false)
+                            && console.log(hook+'::'+migration)
+                        debugLog('resetting role')
+                        await app.sql.unsafe(`reset role`)
+                        debugLog('role reset')
+                        if (module.managedUsers !== false && !['cluster','teardown'].includes(hook)){
+                            debugLog('setting role', roles.migration)
+                            await app.sql.unsafe(`set role ${roles.migration}`)
+                            debugLog('set role', roles.migration)
                         }
+                        debugLog('running action', module.name)
+                        await action(app.sql, { ...argv, roles })
+                        debugLog('action complete', module.name)
+                        debugLog('resetting role', module.name)
+                        await app.sql.unsafe(`reset role`)
+                        debugLog('role reset', module.name)
 
                         if ( rememberChange ) {
                             debugLog('recording change in main table', module.name)
@@ -596,7 +578,6 @@ async function main(){
 
     const [dbUrl, config] = pg
     const url =  new URL(dbUrl)
-    const dbName = url.pathname.slice(1)
     const clusterURL =
         Object.assign(new URL(url), { pathname: '' })+''
 
@@ -679,21 +660,6 @@ async function main(){
                 do nothing
             `
             debugLog('inserted any previous legacy actions migration hook table', { healthCheckFile, restorePhase, skip, hookPhases })
-        } else if (restorePhase == 'dropCreate' ) {
-            debugLog('dropping and recreating db', { healthCheckFile, restorePhase, skip, hookPhases })
-            debugLog('dropping db', { healthCheckFile, restorePhase, skip, hookPhases })
-            await clusterSQL.unsafe(`drop database if exists ${dbName};`)
-            debugLog('dropped db', { healthCheckFile, restorePhase, skip, hookPhases })
-            debugLog('creating db', { healthCheckFile, restorePhase, skip, hookPhases })
-            await clusterSQL.unsafe(`create database ${dbName};`)
-            debugLog('created db', { healthCheckFile, restorePhase, skip, hookPhases })
-            debugLog('drop create reset app connection', { healthCheckFile, restorePhase, skip, hookPhases })
-            await app.resetConnection()
-            debugLog('drop create resetted app connection', { healthCheckFile, restorePhase, skip, hookPhases })
-        } else if ( restorePhase == 'restore' ) {
-            debugLog('pg restore started', { dbUrl }, `restore: ${argv.restore}`)
-            await $`pg_restore --verbose --clean -d ${dbUrl} ${argv.restore}`.nothrow()
-            debugLog('pg restored', { dbUrl }, `restore: ${argv.restore}`)
         } else if (restorePhase == 'removeDevMigrationRecords') {
             debugLog('clearing dev hooks')
             await app.sql`

@@ -5,12 +5,10 @@
 > 😱 Be aware `pgmg` is iterating at a fairly rapid pace and you should expect
 > breaking changes. We use it heavily at https://harth.io/ but we are also
 > constantly iterating on features and ideas. Probably best to wait for a 1.0 or
-> pin to a specific gitref instead of using `npx pgmg`.
+> pin to a specific gitref instead of using `pgmg`.
 >
-> If you want to jump over early, run `pgmg` using `--dry-complete` to mark old
-> migrations as complete using the new pgmg schema format.  Or alternatively
-> just move your old migration files to a different directory so they aren't
-> run against the new pgmg version.
+> If you want to jump over early, run this version of `pgmg` against a different migrations folder as the 
+> metadata stored from older pgmg versions is not compatible.
 
 ## Quick Start
 
@@ -37,35 +35,82 @@ export async function action(sql) {
 }
 ```
 
+First install pgmg and pin it to a specific version
+
 ```bash
+npm install pgmg@next
+```
+
+```bash
+
 # We don't rely on alphabetical order, you just pass in the files
 # you want to migrate.
+
 npx pgmg "$DATABASE_URL" "migrations/first-migrations.mjs"
 ```
 
 ## What
 
 - 🧘‍♀️ A forward only, idempotent, postgres migration tool, with minimal noise
-- 🧙‍♂️ Just enough convenience and magic to avoid common pitfalls of migrating
-  databases
-- 🐘 OOTB support for postgres.js, we pass in a preconfigured postgres.js
-  instance just point us at migration files
-- 😎 A simple migration file format, just export an action function a name
-  and a description
-- 👽 No config files - all metadata stored in the `pgmg` schema in the same
-  database that you are migrating - take a peek at it 👀!
+- 🚀 Innovative dev loop with auto teardown
+- 🐘 Full access to a [postgres.js](https://github.com/porsager/postgres) instance in every migration hook
+- 😎 A simple migration file format, just exported ESM properties and function
 
-## How
+## Automatic teardown
 
-A very simple idea, we simply inject a schema (`pgmg`) into your target database
-and record whether or not a migration has run for that migration name before. If
-so, we skip that file, if not we run it.
+Every migration has an associated auto-generated migration user that owns every object created within the migration.
 
-If the migration file runs without error, we insert a migration row based on the
-exported properties (name, description). If it fails, we don't.
+When running locally (`--dev`), any objects owned by that user will be deleted on each run.
 
-Because all metadata is stored on the migrated db - when you wipe the db, the
-migration tool will also be wiped and pgpg will reapply changes on next run.
+You can access the name of this migration user via `options.roles.migration`
+
+```js
+export const action = async (sql, { roles: { migration }}) => {...}
+```
+
+This completely changes the traditional migration workflow, you do not need to manually write a teardown hook, and you don't need to drop and recreate your db all the time, you can iterate on your schema as easily as you iterate on your application code.
+
+## Service roles
+
+Each migration also has an auto-generated service user.  This user by default has no access until you explicitly grant access.
+
+We recommending granting to the service user first, and then granting the service user to other users.  This makes it easier to logically group related grants.
+
+```js
+export const roles = [
+  { name: 'guitar_service'
+  , password: process.env.GUITAR_SERVICE_PASSWORD
+  , with: 'login inherit'
+  }
+]
+
+export async function action(sql, { roles }) {
+  await sql`grant select on table guitars to ${sql.unsafe(roles.service)}`;
+  await sql`grant insert on table guitars to ${sql.unsafe(roles.service)}`;
+  await sql`grant execute on function play_guitars() to ${
+    sql.unsafe(roles.service)
+  }`;
+
+  await sql`create policy on guitars to ${
+    sql.unsafe(roles.service)
+  } using (...)`;
+
+  // now grant the service role to your own role
+  await sql`
+    grant ${sql.unsafe(roles.service)} to guitar_service
+  `
+}
+```
+
+You can now use`\du+` in psql to easily see which users have been granted which migration grants.
+
+## Forward only
+
+Locally we give you a very powerful automatic teardown which leads to a fast iterative dev loop.  But this feature is only available locally when using the `--dev` flag.
+
+In production `teardown` hooks never run!  
+
+We recommend "rolling forward" to fix mistakes in production migrations as teardown/down hooks are rarely tested and forward migrations are a lot easier to reason about.
 
 ## API
 
@@ -79,6 +124,8 @@ Usage: pgmg [PGMG OPTIONS] [CONNECTION] [OPTIONS] [FILES]
 --help      Logs this help message
 
 --version   Logs the current pgmg version
+
+--debug     Enables verbose debug logging
 
 [CONNECTION]
 
@@ -117,12 +164,6 @@ The only way to specify a connection is via a pg connection URL.
                             Not to be used in production.  Will exit non zero
                             if --dev flag is not also passed.
 
---restore <file>            Restores a database backup and then runs migrations
-                            against it.  Does the following:
-                            Drops the original db, creates a new db, runs
-                            cluster level migrations, restores the backup into
-                            the new database, then runs the remaining migrations.
-
 --env-file <file>           Specify an env file to be loaded before running your
                             migration files.  Note this will overwrite ambient
                             environment variables with the same name.
@@ -139,21 +180,6 @@ The only way to specify a connection is via a pg connection URL.
                             that would run.  But does run initial setup scripts
                             to ensure pgmg tables are coherent.
 
---dry-complete              Like --dry but marks any matched migrations as complete.  This
-                            can be helpful when upgrading pgmg versions where you want to
-                            skip old migration files going forward.
-
---ssl
-    | --ssl                 Enables ssl
-    | --ssl=prefer          Prefers ssl
-    | --ssl=require         Requires ssl
-    | --ssl=reject          Reject unauthorized connections
-    | --ssl=no-reject       Do not reject unauthorized connections
-    | --ssl=heroku          --no-ssl-reject if the host ends with a .com
-
-    For more detailed connection options, connect to postgres manually
-    via -X
-
 --health-check-file <file>  Write to <file> when migration completes without error.
                             If in --dev mode this file will be deleted and recreated
                             for each migration.
@@ -163,9 +189,9 @@ The only way to specify a connection is via a pg connection URL.
                             migration is complete.
 ```
 
-### Migration File
+### Migration File Format
 
-A migration file export various lifecycle functions that are run depending on
+A migration file exports various lifecycle functions that are run depending on
 context and other metadata exports.
 
 ```js
@@ -201,12 +227,6 @@ incorrect or incomplete, that is always worthwhile to document.
 
 This hook is where you define the majority of your migration logic.
 
-Note, we do not wrap action calls in a transaction so if you want to roll back changes on
-failure you may want to use [`sql.begin`](https://github.com/porsager/postgres/#transactions)
-
-Additionally, not all schema changes can occur within a transaction, e.g. role changes, or any usage of
-[`concurrently`](https://www.postgresql.org/docs/current/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY).
-
 An `action` export gets a raw postgres `sql` instance.
 
 `pgmg` creates a new connection for each migration file to isolate stateful connection contexts.  So be aware any
@@ -225,9 +245,6 @@ had that migration run against it.
 
 > 💪 You can also dump roles via `pg_dumpall` and not bother with cluster hooks at
 > all. But it can be slow to dump/restore an entire cluster instead of a single database.
-
-> 🤓 We may deprecate cluster hooks when we release our own `pg_dump` helper that manages
-> restoring roles/extensions for you.
 
 #### `always`
 
@@ -248,97 +265,6 @@ db state so you can test your migration changes.
 
 `teardown` will only run if the `--dev` hook is passed to `pgmg`.
 
-> Note in `--dev` by default `pgmg` automatically tears down created objects
-> from the last migration run. You can disable this via
-> `export const managedUsers = false`
-
-## Automatic Teardown
-
-`pgmg` has a very clever (and a little bit magical 🪄) feature for automatic
-teardown of migrations for local development. We do this because effectively
-writing up and down scripts is hard and error prone and probably a bad idea.
-
-How does it work?
-
-`pgmg` automatically creates two roles for every migration file. A `migration` role and
-a `service` role. Before running your migration hooks we `set role` to the
-migration role. When you re-run a `--dev` migration we inject a teardown hook that
- runs `drop owned by <migration role>`.
-
-The only caveat is, if you use `set role` yourself in your migration you opt out
-of this feature.
-
-## Automatic Roles
-
-These `pgmg` managed roles can be accessed in the options object passed as a
-second argument to your migration hooks
-
-```js
-export function actions(sql, { roles }) {
-  -- a role that services should connect as
-  -- use for defining RLS and grants
-  await sql`grant ${roles.service} to my_pg_user1`;
-
-  -- a super user role for creating/owning objects
-  await sql`grant ${roles.migration} to my_pg_user2`;
-}
-```
-
-### Migration Role
-
-Each migration has an auto generated superuser role named
-`pgmg_migration_{name}` where name is taken from your unique migration name.
-Before any of your migration hooks run, `pgmg` will `set role` to the migration
-role so that any created objects are tied to the migration role, not the
-connection role (usually the `postgres` super user).
-
-If you are running `pgmg` with the `--dev` flag then a teardown hook will
-automatically be applied which destroys any objects created by any dev migration
-users.
-
-> You can disable this feature via `export const managedUsers = false`.
-
-### Service Role
-
-Each migration has an auto generated service role named `pgmg_service_{name}`
-where name is taken from your unique migration name. It is recommend to assign
-any grants or RLS policies to the generated service role and then grant the
-generated service role to your own postgres role one time at the end.
-
-This has several benefits:
-
-- Safe automatic teardown scoped to a specific migration/service role's database
-  objects
-- Easily see what migrations are relevant to specific service roles via `\du` in
-  psql
-- Assign / Reuse ownership to multiple services by granting the generated
-  service role to multiple downstream postgres roles.
-- Revoke permissions associated with a migration via
-  `revoke ${sql.unsafe(roles.service)} from the_role`
-
-```js
-export async functin cluster(sql){
-  await sql`create role guitar_service with password ${sql.unsafe(process.env.GUITAR_SERVICE_PASSWORD)}`
-}
-
-export async function action(sql, { roles }) {
-  await sql`grant select on table guitars to ${sql.unsafe(roles.service)}`;
-  await sql`grant insert on table guitars to ${sql.unsafe(roles.service)}`;
-  await sql`grant execute on function play_guitars() to ${
-    sql.unsafe(roles.service)
-  }`;
-
-  await sql`create policy on guitars to ${
-    sql.unsafe(roles.service)
-  } using (...)`;
-
-  // now grant the service role to your own role
-  await sql`
-    grant ${sql.unsafe(roles.service)} to guitar_service
-  `
-}
-```
-
 If you are running `pgmg` with the `--dev` then a teardown hook will
 automatically be applied which destroys any objects owned by the migration and service user.
 
@@ -349,19 +275,6 @@ processing service you might run this line somewhere in your migration.
 ```js
 await sql`grant ${sql.unsafe(roles.service)} to photo_processing`;
 ```
-
-> You can disable this feature via `export const managedUsers = false`.
-
-> By default the service role has no permissions, and must be explicitly granted
-> in your migration hook.
-
-## Other Magic
-
-For local development, if `pgmg` detects a service user already exists we assume
-the teardown hook needs to run for that migration. The only reason a
-service/migration user would still exist would be if there was a crash or early
-exit before `pgmg` finished cleaning up. This mechanism is also how `pgmg`
-tracks if the cluster hook needs to re-run on a new machine.
 
 ## FAQ
 
@@ -379,7 +292,7 @@ $ ls -l migrations
 03-magic-link.js
 
 # globbing will natively order alphabetically by default
-$ npx pgmg $DATABASE_URL migrations/*.js
+$ pgmg $DATABASE_URL migrations/*.js
 ```
 
 You could also have a simple text file that acts as a manifest and expand the file as arguments like so:
@@ -395,36 +308,17 @@ magic-link.js
 We can expand that file as arguments like so:
 
 ```bash
-npx pgmg $DATABASE_URL $(cat migrations.txt)
+pgmg $DATABASE_URL $(cat migrations.txt)
 ```
 
 If you wanted, your manifest could be json, or yaml, or whatever you want, as
 long as you can extract the filenames and pass them as arguments.
 
-
-## Upgrading from prior pgmg versions
-
-From time to time the internal representation of migrations under the `pgmg` schema changes.
-If you run a new pgmg major version against old migration files the CLI may get confused and
-re-run files that do not need to run.
-
-The CLI does attempt to detect and handle older migration records, but it is safer to never
-expose old migration files to new major versions of `pgmg`.
-
-You can avoid this by either deleting/moving old migration files, or marking those migrations
-as complete using `--dry-complete`
-
-```bash
-# Mark all migrations/*.js as having run in production
-# without actually running them
-npx pgmg "$DB_URL" migrations/*.js --dry-complete --prod
-```
-
 ## Running migrations in production
 
 `pgmg` has two modes `--dev` and `--prod`.  In `--dev` mode pgmg will teardown database objects
 from migrations that were run locally and recreate them each time.  This can be combined with
-tools like watc, nodemon or node.js' new built in `--watch` feature to create a nice fast
+tools like watch, nodemon or node.js' built in `--watch` feature to create a nice fast
 feedback loop when working on migrations.
 
 In `--prod` mode, migrations run one time only.  And any migrations marked as completed in `prod`
@@ -432,7 +326,12 @@ will never re-run or teardown in `--dev` mode.
 
 If you are using `cluster` hooks, its important to maintain a consistent `HOSTNAME` when running
 migrations in production mode.  This will prevent roles or other cluster level objects from
-needlessly being created twice.
+needlessly being created twice.  If you run your migrations in CI / Github actions you will want to 
+pass a fixed `HOSTNAME` variable so each new runner doesn't get treated as a new "prod".
+
+```
+HOSTNAME=prod pgmg ...
+```
 
 If you are running migrations in CI prefix your `pgmg` command with `HOSTNAME=ci` so that the 
 randomized hostname doesn't confuse pgmg into running a cluster hook twice.
