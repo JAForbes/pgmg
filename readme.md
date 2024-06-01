@@ -2,13 +2,22 @@
 
 `pgmg` = postgres + migrations
 
-> 😱 Be aware `pgmg` is iterating at a fairly rapid pace and you should expect
-> breaking changes. We use it heavily at https://harth.io/ but we are also
-> constantly iterating on features and ideas. Probably best to wait for a 1.0 or
-> pin to a specific gitref instead of using `pgmg`.
+> 🎺🎺🎺 `pgmg@next` (this branch) is soon to be released as v1! 🎺🎺🎺
 >
-> If you want to jump over early, run this version of `pgmg` against a different migrations folder as the 
-> metadata stored from older pgmg versions is not compatible.
+> v1 will automatically patch the internal tables in your database
+> but old migration files are not compatible.
+>
+> It's imperative that you move old migration files 
+> to a different folder that pgmg cannot see, as
+> pgmg will think those old migrations have not run yet and re-run them 😱
+>
+> To ensure that no-one mistakenly runs 0.x migration files against 1.x
+> we have added a (temporarily) mandatory `--v1` flag to break CI pipelines
+> that use the latest npm version without checking compatibility first.
+>
+> We apologise for the inconvenience for temporarily breaking your CI
+> but we would prefer that minor inconvenience to actually impacting
+> a production migration.
 
 ## Quick Start
 
@@ -77,14 +86,17 @@ Each migration also has an auto-generated service user.  This user by default ha
 We recommending granting to the service user first, and then granting the service user to other users.  This makes it easier to logically group related grants.
 
 ```js
-export const roles = [
-  { name: 'guitar_service'
-  , password: process.env.GUITAR_SERVICE_PASSWORD
-  , with: 'login inherit'
-  }
-]
 
+import { createRole } from 'pgmg'
+// runs one time only (in prod)
 export async function action(sql, { roles }) {
+
+  // create a role (if it doesn't already exist)
+  await createRole('guitar_service', {
+    password: process.env.GUITAR_SERVICE_PASSWORD,
+    with: 'inherit'
+  })
+
   await sql`grant select on table guitars to ${sql.unsafe(roles.service)}`;
   await sql`grant insert on table guitars to ${sql.unsafe(roles.service)}`;
   await sql`grant execute on function play_guitars() to ${
@@ -112,12 +124,33 @@ In production `teardown` hooks never run!
 
 We recommend "rolling forward" to fix mistakes in production migrations as teardown/down hooks are rarely tested and forward migrations are a lot easier to reason about.
 
+## Migrating from pgmg 0.x
+
+
+### Breaking change
+
+Originally we planned to gracefully upgrade older migration metadata and handle previous file formats, but after a long period of time we've decided to make 1.x a breaking change with no promise of automatic upgrades.
+
+This keeps the codebase simpler and removes a lot of conditional logic.  Ultimately we want pgmg to be as simple as possible because migrations should be simple and predictable.
+
+We recommend making a clean break when upgrading to v1, make a `migrations/0.x/` folder and put your existing migrations in there.  Then put new migrations in `migrations/v1/` and point v1 at that folder.
+
+You can use any folder naming scheme you'd like, this is just a suggestion.  You can also simply delete old migrations.Once a migration has run in production there's not much point keeping it around except for historical purposes.
+
+When you have made this change pass `--v1` on the CLI to pgmg to communicate to the CLI that you are aware of the breaking changes and have made the appropriate change to your migration files.
+
+This flag will be mandatory for a few months after the release of v1, afterwards it will be ignored.
+
+### Changelog
+
+Checkout the [changelog issue](https://github.com/JAForbes/pgmg/issues/38) for a list of changes.  You can also ask questions about upgrading in the comments.
+
 ## API
 
 ### CLI
 
 ```
-Usage: pgmg [PGMG OPTIONS] [CONNECTION] [OPTIONS] [FILES]
+Usage: pgmg (--dev|--prod) [CONNECTION] [OPTIONS] [FILES]
 
 [PGMG OPTiONS]
 
@@ -126,6 +159,11 @@ Usage: pgmg [PGMG OPTIONS] [CONNECTION] [OPTIONS] [FILES]
 --version   Logs the current pgmg version
 
 --debug     Enables verbose debug logging
+
+--v1        Required flag that will become optional soon after releasing v1.
+            This let's us know you have read the migration guide and are aware
+            that old migrations are not compatible with v1 and should be 
+            moved / deleted from your normal migrations folder.
 
 [CONNECTION]
 
@@ -139,12 +177,19 @@ Any files passed as arguments after the connection string will be imported as JS
 
 The only way to specify a connection is via a pg connection URL.
 
-
 ╭――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――╮
 │                                                                                          │
-│               Note you must specify --dev or --prod modes when running pgmg              │
+│               Note 0.x migration files are incompatible with pgmg@1.x                    │
+│                                                                                          │
+│                         Check the readme.md to upgrade safely                            │
+│                                                                                          │
 │                                                                                          │
 ╰――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――╯
+
+--v1                        Prevents pgmg from warning you that 0.x migration files
+                            are incompatible with 1.x.  Only pass this flag
+                            after you have read and followed the migration guide
+                            at https://github.com/JAForbes/pgmg
 
 
 --dev                       Runs any teardown hooks before running the
@@ -159,22 +204,6 @@ The only way to specify a connection is via a pg connection URL.
                             file again.
                             Cluster hooks will still run 1 time per host to ensure
                             roles and cluster level settings are configured at each site.
-
---teardown                  Runs the teardown hook for migrations tagged as dev.
-                            Not to be used in production.  Will exit non zero
-                            if --dev flag is not also passed.
-
---env-file <file>           Specify an env file to be loaded before running your
-                            migration files.  Note this will overwrite ambient
-                            environment variables with the same name.
-
---search-path=''            Specify custom default search_path for all your migrations.
-                            Default='' if not prevented via --keep-default-search-path
-
---keep-default-search-path  By default pgmg sets search_path='' to encourage you
-                            to fully qualify names and/or explicitly set search_path
-                            to the minimum required scope.  This flag will leave
-                            search_path at its more insecure default.
 
 --dry                       Doesn't run any migrations, instead just prints out the migrations
                             that would run.  But does run initial setup scripts
@@ -198,14 +227,18 @@ context and other metadata exports.
 export const name = "";
 export const description = "";
 
-// runs once per host
-export const cluster = async (sql) => {};
+// runs in --dev only
+// skipped if this migration has already run in --prod mode
+export const teardown = async (sql) => {};
 
-// runs once per migration
+// runs every migration
+export const pre = async (sql) => {};
+
+// runs one time, recorded and never re-run except in --dev mode
 export const action = async (sql) => {};
 
 // runs every migration
-export const always = async (sql) => {};
+export const post = async (sql) => {};
 ```
 
 #### `name` (required)
@@ -232,29 +265,21 @@ An `action` export gets a raw postgres `sql` instance.
 `pgmg` creates a new connection for each migration file to isolate stateful connection contexts.  So be aware any
 transaction commits or rollbacks are on a per migration file basis, not the entire set of migration files that are running.
 
-#### `cluster`
+#### `pre`
 
-The `cluster` hook is designed for cluster level migrations, like defining
-users/roles and server settings. It runs before the `action` /
-`always` hooks.
+Run's every time you run `pgmg`.  Can be used for preflight checks that you want to ensure run every time, even after that migration has already run in prod.
 
-What makes `cluster` different to just another hook is that it will run if the
-recorded run was on a different hostname. So if you download a prod snapshot,
-all the cluster snapshots will run again even if that prod snapshot has already
-had that migration run against it.
+Note this hook is rarely needed in normal migration code but is used internally so we also expose it.
 
-> 💪 You can also dump roles via `pg_dumpall` and not bother with cluster hooks at
-> all. But it can be slow to dump/restore an entire cluster instead of a single database.
+#### `post`
 
-#### `always`
+Like `pre`, the `post` hooks runs every time `pgmg` is passed a migration file. This hook
+is useful for checks or migrations that should be re-evaluated every time. 
 
-The `always` hooks runs every time `pgmg` is passed a migration file. This hook
-is useful for checks or migrations that should be re-evaluated every time. An
-example would be dynamically generated triggers or row level security policies
+An example would be dynamically generated triggers or row level security policies
 that query the info schema for tables matching a given rule or predicate.
 
-It can also be useful for local development as your migration will run every
-time.
+If `action` has not run yet, `post` runs after `action`.
 
 #### `teardown`
 
@@ -263,24 +288,30 @@ only migration tool in production, but for local development it can be handy to
 re-run the same migration continually and have some clean up logic to reset the
 db state so you can test your migration changes.
 
-`teardown` will only run if the `--dev` hook is passed to `pgmg`.
+`teardown` will only run if the `--dev` hook is passed to `pgmg` and only runs if a migration has already run for that file.
 
 If you are running `pgmg` with the `--dev` then a teardown hook will
 automatically be applied which destroys any objects owned by the migration and service user.
 
-You are encouraged to manually grant the service user to an actual postgres
-service user in your app. E.g. if you had a postgres user used by a photo
+This feature is always on, but you can opt out of it by changing the migration role via `set role` in your migration.
+
+It is completely optional, but you are encouraged to manually grant the service user to an actual postgres service user in your app. E.g. if you had a postgres user used by a photo
 processing service you might run this line somewhere in your migration.
 
 ```js
-await sql`grant ${sql.unsafe(roles.service)} to photo_processing`;
+await sql`grant select on xyz to ${sql(roles.service)}`
+await sql`grant select on abc to ${sql(roles.service)}`
+
+await sql`grant ${sql(roles.service)} to photo_processing`;
 ```
+
+This leads to a much clearer and more organized grant heirachy.
 
 ## FAQ
 
 ### How do I order my migrations?
 
-pgmg will apply migrations in the order you pass them to pgmg as arguments.
+`pgmg` will apply migrations in the order you pass them to pgmg as arguments.
 
 So if you choose to number your migrations, a simple glob will order them.
 
@@ -314,6 +345,15 @@ pgmg $DATABASE_URL $(cat migrations.txt)
 If you wanted, your manifest could be json, or yaml, or whatever you want, as
 long as you can extract the filenames and pass them as arguments.
 
+### How do I take a prod snapshot correctly (for local development)?
+
+Postgres has database level objects (like tables, views, policies) and cluster level global objects (like roles and grants).
+
+When you use `pg_dump` you are only getting access to the database level objects not the cluster/global level objects.
+
+To correctly restore a prod instance locally we recommend first capturing and restoring these global objects via `pg_dumpall -g $DB_URL -f globals.sql`, see the postgres documentation for more information.
+
+
 ## Running migrations in production
 
 `pgmg` has two modes `--dev` and `--prod`.  In `--dev` mode pgmg will teardown database objects
@@ -324,14 +364,3 @@ feedback loop when working on migrations.
 In `--prod` mode, migrations run one time only.  And any migrations marked as completed in `prod`
 will never re-run or teardown in `--dev` mode.
 
-If you are using `cluster` hooks, its important to maintain a consistent `HOSTNAME` when running
-migrations in production mode.  This will prevent roles or other cluster level objects from
-needlessly being created twice.  If you run your migrations in CI / Github actions you will want to 
-pass a fixed `HOSTNAME` variable so each new runner doesn't get treated as a new "prod".
-
-```
-HOSTNAME=prod pgmg ...
-```
-
-If you are running migrations in CI prefix your `pgmg` command with `HOSTNAME=ci` so that the 
-randomized hostname doesn't confuse pgmg into running a cluster hook twice.

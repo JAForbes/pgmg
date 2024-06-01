@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16.3
+    environment:
+      POSTGRES_PASSWORD: password
+      PGDATA: /var/lib/postgresql/data/pgdata
+
+    volumes:
+      - ./output/.pg/data:/var/lib/postgresql/data/pgdata
+
+  pgmg:
+    build:
+      dockerfile_inline: |
+        FROM node:20-alpine as base
+        RUN apk add inotify-tools
+
+        CMD npx nodemon -L --watch "./migrations/*.js" --watch "./tests/*.js" --exec npm start
+
+    working_dir: $PWD/services/pgmg
+    volumes:
+      - ./services/pgmg:$PWD/services/pgmg
+      - ./package.json:$PWD/services/pgmg/node_modules/pgmg/package.json
+      - ./lib:$PWD/services/pgmg/node_modules/pgmg/lib
