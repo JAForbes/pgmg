@@ -116,7 +116,7 @@ if (argv.version) {
     process.exit(0);
 }
 
-main().catch((e) => {
+main(argv).catch((e) => {
     console.error(e);
     process.exit(1);
 });

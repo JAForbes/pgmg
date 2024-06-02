@@ -17,7 +17,7 @@ services:
         CMD npx nodemon -L --watch "./migrations/*.js" --watch "./tests/*.js" --exec npm start
 
     working_dir: $PWD/services/pgmg
+    user: 1000:1000
     volumes:
       - ./services/pgmg:$PWD/services/pgmg
-      - ./package.json:$PWD/services/pgmg/node_modules/pgmg/package.json
-      - ./lib:$PWD/services/pgmg/node_modules/pgmg/lib
+      - .:$PWD/services/pgmg/node_modules/pgmg
