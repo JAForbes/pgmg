@@ -3,7 +3,7 @@ import process from 'node:process'
 import assert from 'node:assert'
 import { Buffer } from 'node:buffer'
 
-const { crypto, TextDecoder } = globalThis
+const { crypto, TextDecoder, console } = globalThis
 
 export const name = 'Connections'
 
@@ -242,7 +242,6 @@ export const action = async (sql) => {
 			}
 
 			// now build the connection string
-
 			console.log(`postgres://${conn.username}:${password}@${conn.host}:${conn.port}/${conn.database}`)
 		}
 		
