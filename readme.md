@@ -269,7 +269,13 @@ transaction commits or rollbacks are on a per migration file basis, not the enti
 
 Run's every time you run `pgmg`.  Can be used for preflight checks that you want to ensure run every time, even after that migration has already run in prod.
 
-Note this hook is rarely needed in normal migration code but is used internally so we also expose it.
+The primary use of `pre` is to create roles via `createRole` or `createRoleFromUrl`.  You can alternatively dump roles from your prod database via pg_dumpall
+
+```bash
+pg_dumpall --global -d ${DB_URL} -f roles.sql
+```
+
+And then run that `roles.sql` file against your db before restoring a dump from `pg_dump`.
 
 #### `post`
 
@@ -306,6 +312,62 @@ await sql`grant ${sql(roles.service)} to photo_processing`;
 ```
 
 This leads to a much clearer and more organized grant heirachy.
+
+#### `connection`
+
+By default, pgmg uses a single connection, this makes it much simpler for pgmg to set roles and other config and clean things up efficiently.
+
+However, when you doing large backfills you may want to split your work up into parallel transactions.  In this instance you can configure the `postgres.js` connection directly by exporting a connection options object.
+
+Check out the full documentation for postgres.js connection config [here](https://github.com/porsager/postgres)
+
+```js
+export const connection = {
+  max: 4
+}
+```
+
+Note, if you do use this, `pgmg` will reconnect to the database from scratch before and after each hook for that migration.  Unfortunately this is necessary to ensure any config commands (e.g. `set role` or `set search_path = '...') remains isolated to that migration.
+
+We recommend leaving the connection config alone unless if you backfilling millions of rows.
+
+#### `archived`
+
+When you are sure you will never need pgmg to run a `pre` or `post` migration hook ever again you can export the `archived` flag set to `true`.
+
+You can also simply move the file to a folder pgmg won't see, or somehow avoid passing that migration file name to pgmg in your glob, but some people may prefer to keep the file where it is and use this declarative option instead.
+
+```js
+export const archived = true
+```
+
+### Utils
+
+#### `createRole`
+
+A util that will create a role if does not already exist, recommended only if you do not plan to use `pg_dumpall` to grab global objects when restoring from prod.
+
+```js
+export const pre = sql =>
+  createRole(sql, { 
+    name: 'example'
+    , password: process.env.EXAMPLE_PASSWORD //optional
+    , with: 'noreplication' // optional
+  })
+```
+
+#### `createRoleFromUrl`
+
+A util that will create a role if does not already exist, recommended only if you do not plan to use `pg_dumpall` to grab global objects when restoring from prod.
+
+At Harth, we use database url's in migrations often as we don't need to have multiple secrets for different usecases, the url format is convenient as it is a standard that is easy to parse and contains all the relevant information in one place.
+
+```js
+export const pre = sql =>
+  createRoleFromUrl(sql, `postgres://example:${process.env.EXAMPLE_PASSWORD}@postgres:5432/postgres`, {
+    with: 'noreplication' // optional
+  })
+```
 
 ## FAQ
 
