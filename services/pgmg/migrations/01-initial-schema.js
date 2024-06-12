@@ -15,11 +15,8 @@ export const description = `
     ship eventually.
 `
 
-export const pre = async (sql) => {
-    await createRoleFromUrl(sql, process.env.API_DB_URL)
-}
-
 export const action = async (sql) => {
+    await createRoleFromUrl(sql, process.env.API_DB_URL)
     await sql`
         create schema app;
     `

@@ -269,14 +269,6 @@ transaction commits or rollbacks are on a per migration file basis, not the enti
 
 Run's every time you run `pgmg`.  Can be used for preflight checks that you want to ensure run every time, even after that migration has already run in prod.
 
-The primary use of `pre` is to create roles via `createRole` or `createRoleFromUrl`.  You can alternatively dump roles from your prod database via pg_dumpall
-
-```bash
-pg_dumpall --global -d ${DB_URL} -f roles.sql
-```
-
-And then run that `roles.sql` file against your db before restoring a dump from `pg_dump`.
-
 #### `post`
 
 Like `pre`, the `post` hooks runs every time `pgmg` is passed a migration file. This hook
@@ -345,10 +337,10 @@ export const archived = true
 
 #### `createRole`
 
-A util that will create a role if does not already exist, recommended only if you do not plan to use `pg_dumpall` to grab global objects when restoring from prod.
+A util that will create a role if does not already exist
 
 ```js
-export const pre = sql =>
+export const action = sql =>
   createRole(sql, { 
     name: 'example'
     , password: process.env.EXAMPLE_PASSWORD //optional
@@ -358,9 +350,9 @@ export const pre = sql =>
 
 #### `createRoleFromUrl`
 
-A util that will create a role if does not already exist, recommended only if you do not plan to use `pg_dumpall` to grab global objects when restoring from prod.
+A util that will create a role if does not already exist
 
-At Harth, we use database url's in migrations often as we don't need to have multiple secrets for different usecases, the url format is convenient as it is a standard that is easy to parse and contains all the relevant information in one place.
+> 🤔 At Harth, we use database url's in migrations often as we don't need to have multiple secrets for different usecases, the url format is convenient as it is a standard that is easy to parse and contains all the relevant information in one place.
 
 ```js
 export const pre = sql =>
@@ -409,12 +401,11 @@ long as you can extract the filenames and pass them as arguments.
 
 ### How do I take a prod snapshot correctly (for local development)?
 
-Postgres has database level objects (like tables, views, policies) and cluster level global objects (like roles and grants).
+Postgres has database level objects (like tables, views, policies) and cluster level global objects (like roles, grants, tablespaces).
 
 When you use `pg_dump` you are only getting access to the database level objects not the cluster/global level objects.
 
 To correctly restore a prod instance locally we recommend first capturing and restoring these global objects via `pg_dumpall -g $DB_URL -f globals.sql`, see the postgres documentation for more information.
-
 
 ## Running migrations in production
 
