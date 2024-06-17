@@ -12,7 +12,7 @@
 > pgmg will think those old migrations have not run yet and re-run them 😱
 >
 > To ensure that no-one mistakenly runs 0.x migration files against 1.x
-> we have added a (temporarily) mandatory `--v1` flag to break CI pipelines
+> we have added a (temporary) mandatory `--v1` flag to break CI pipelines
 > that use the latest npm version without checking compatibility first.
 >
 > We apologise for the inconvenience for temporarily breaking your CI
@@ -135,7 +135,7 @@ This keeps the codebase simpler and removes a lot of conditional logic.  Ultimat
 
 We recommend making a clean break when upgrading to v1, make a `migrations/0.x/` folder and put your existing migrations in there.  Then put new migrations in `migrations/v1/` and point v1 at that folder.
 
-You can use any folder naming scheme you'd like, this is just a suggestion.  You can also simply delete old migrations.Once a migration has run in production there's not much point keeping it around except for historical purposes.
+You can use any folder naming scheme you'd like, this is just a suggestion.
 
 When you have made this change pass `--v1` on the CLI to pgmg to communicate to the CLI that you are aware of the breaking changes and have made the appropriate change to your migration files.
 
@@ -309,7 +309,7 @@ This leads to a much clearer and more organized grant heirachy.
 
 By default, pgmg uses a single connection, this makes it much simpler for pgmg to set roles and other config and clean things up efficiently.
 
-However, when you doing large backfills you may want to split your work up into parallel transactions.  In this instance you can configure the `postgres.js` connection directly by exporting a connection options object.
+However, for large backfills you may want to split your work up into parallel transactions.  In this instance you can configure the `postgres.js` connection directly by exporting a connection options object.
 
 Check out the full documentation for postgres.js connection config [here](https://github.com/porsager/postgres)
 
@@ -321,7 +321,7 @@ export const connection = {
 
 Note, if you do use this, `pgmg` will reconnect to the database from scratch before and after each hook for that migration.  Unfortunately this is necessary to ensure any config commands (e.g. `set role` or `set search_path = '...') remains isolated to that migration.
 
-We recommend leaving the connection config alone unless if you backfilling millions of rows.
+We recommend leaving the connection config alone unless if you are backfilling millions of rows.
 
 #### `archived`
 
@@ -351,8 +351,6 @@ export const action = sql =>
 #### `createRoleFromUrl`
 
 A util that will create a role if does not already exist
-
-> 🤔 At Harth, we use database url's in migrations often as we don't need to have multiple secrets for different usecases, the url format is convenient as it is a standard that is easy to parse and contains all the relevant information in one place.
 
 ```js
 export const pre = sql =>
